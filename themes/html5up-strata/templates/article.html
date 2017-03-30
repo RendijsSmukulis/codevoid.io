@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}{{ article.title|striptags }}{% endblock %}
+{% block content %}
+<section id="one">
+
+  <article>
+    		<header class="major">
+			<h2 class="blog-post-title archive-header"><a href="{{ SITEURL }}/{{ article.url }}" rel="bookmark"
+           title="Permalink to {{ article.title|striptags }}">{{ article.title }}</a></h2>
+		</header>
+		  
+		<div class="post-preview">{% include 'article_infos.html' %}{{ article.content }}
+		</div>
+  </article>
+</section>
+{% endblock %}

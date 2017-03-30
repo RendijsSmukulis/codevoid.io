@@ -1673,7 +1673,7 @@
 		padding: 0.5em 0 0.5em 1.5em;
 	}
 
-	code {
+	.highlight {
 		background: #f7f7f7;
 		border-radius: 0.35em;
 		border: solid 2px #efefef;
@@ -1690,7 +1690,7 @@
 		margin: 0 0 2em 0;
 	}
 
-		pre code {
+		pre .highlight {
 			display: block;
 			line-height: 1.75em;
 			padding: 1em 1.5em;
@@ -3126,12 +3126,12 @@
 
 	}
 
-	pre > code {
+	pre > .highlight {
 		border: 1px solid lightgrey;
     border-left: 3px solid lightsteelblue;
 	}
 
-	p > code {
+	p > .highlight {
     background: white;
     border-radius: 0;
     border: none;
