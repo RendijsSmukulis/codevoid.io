@@ -1,5 +1,10 @@
 .highlight {
-    font-size: 80%;
+    font-size: 0.9em;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace;
+    display: block;
+    line-height: 110%;
+    padding: 1em 1.5em;
+    overflow-x: auto;
 }
 
 .hll {

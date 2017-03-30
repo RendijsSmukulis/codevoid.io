@@ -1566,7 +1566,7 @@
 		}
 
 	body, input, select, textarea {
-		color: #a2a2a2;
+		color: #505050;
 		font-family: "Source Sans Pro", Helvetica, sans-serif;
 		font-size: 16pt;
 		font-weight: 400;
@@ -1590,7 +1590,7 @@
 		}
 
 	strong, b {
-		color: #787878;
+		color: #505050;
 		font-weight: 400;
 	}
 
@@ -1603,7 +1603,7 @@
 	}
 
 	h1, h2, h3, h4, h5, h6 {
-		color: #787878;
+		color: #505050;
 		font-weight: 400;
 		line-height: 1em;
 		margin: 0 0 1em 0;
@@ -1677,7 +1677,6 @@
 		background: #f7f7f7;
 		border-radius: 0.35em;
 		border: solid 2px #efefef;
-		font-family: "Courier New", monospace;
 		font-size: 0.9em;
 		margin: 0 0.25em;
 		padding: 0.25em 0.65em;
@@ -1685,9 +1684,8 @@
 
 	pre {
 		-webkit-overflow-scrolling: touch;
-		font-family: "Courier New", monospace;
 		font-size: 0.9em;
-		margin: 0 0 2em 0;
+		margin: 0 0 0 0;
 	}
 
 		pre .highlight {
@@ -1856,7 +1854,7 @@
 		input[type="checkbox"] + label,
 		input[type="radio"] + label {
 			text-decoration: none;
-			color: #a2a2a2;
+			color: #505050;
 			cursor: pointer;
 			display: inline-block;
 			font-size: 1em;
@@ -3135,7 +3133,6 @@
     background: white;
     border-radius: 0;
     border: none;
-    font-family: "Courier New", monospace;
     font-size: 1.0em;
     margin: 0 0 0 4px;
     padding: 0;
