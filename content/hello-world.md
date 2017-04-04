@@ -1,8 +1,8 @@
-Title: My First Review
+Title: The Hello World Post
 Date: 2010-12-03 10:20
-Category: Review
+Category: Code
 
-Following is a review of hello world.
+Following is something or other.
 
     :::python
     count = 0
@@ -20,9 +20,6 @@ Following is a review of hello world.
             print count
             count = count + 1
 
-Boom, more lines.
+You make my fizz buzz.  
 
 ![Alt Text]({filename}/images/han.jpg)
-
-
-Boooom.

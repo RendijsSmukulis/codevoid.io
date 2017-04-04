@@ -3,7 +3,7 @@
 from __future__ import unicode_literals
 
 AUTHOR = 'Rendijs Smukulis'
-SITENAME = 'Morbid Code'
+SITENAME = 'Code Void'
 SITEURL = ''
 
 PATH = 'content'
@@ -29,6 +29,18 @@ SOCIAL = (('My GitHub', 'https://github.com/RendijsSmukulis'),
           )
 
 DEFAULT_PAGINATION = 10
+
+extra_icons = ['favicon.ico', 'android-chrome-192x192.png', 'android-chrome-256x256.png', 'apple-touch-icon.png', 'browserconfig.xml',  'favicon-16x16.png',  'favicon-32x32.png', 'manifest.json', 'mstile-150x150.png', 'safari-pinned-tab.svg']
+
+STATIC_PATHS = ['images']
+STATIC_PATHS.extend(list(map(lambda x: "extra/" + x, extra_icons)))
+print(STATIC_PATHS)
+
+EXTRA_PATH_METADATA = {}    	
+
+for icon in extra_icons:
+    EXTRA_PATH_METADATA["extra/" + icon] = {"path": icon}
+
 
 # Uncomment following line if you want document-relative URLs when developing
 #RELATIVE_URLS = True
