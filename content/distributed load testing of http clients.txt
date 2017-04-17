@@ -1,0 +1,6 @@
+docker run -p 4242:4242 petergrace/opentsdb-docker
+docker build -t hydraload-load-test-server .
+
+docker.io/rendijssmukulis/hydraload-load-test-server
+
+elb: should use App not Classic: http://docs.aws.amazon.com/AmazonECS/latest/developerguide/service-load-balancing.html
