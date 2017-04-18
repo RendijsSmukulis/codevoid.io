@@ -3,4 +3,14 @@ docker build -t hydraload-load-test-server .
 
 docker.io/rendijssmukulis/hydraload-load-test-server
 
+order: 
+- talk about why, server-vs-client loadtesting
+- talk about creating the docker image, link to prev article
+- create a task in ecs
+- create a cluster
+- run task in cluster
+- create an elb in front
+- scale up to 5 instances, matching port 5858 on container to 0 on host
+
 elb: should use App not Classic: http://docs.aws.amazon.com/AmazonECS/latest/developerguide/service-load-balancing.html
+
