@@ -1,5 +1,5 @@
-<span id="article-date-span"><em>{{ article.locale_date }}</em></span>
 <footer class="post-info">
+        <span id="article-date-span"><em>{{ article.locale_date }}</em></span>
         {% if article.author and DISPLAY_AUTHOR_ON_POSTINFO %}
         	<span>| by <a class="url fn" href="{{ SITEURL }}/{{ article.author.url }}">{{ article.author }}</a></span>
         {% endif %}

@@ -1,12 +1,12 @@
-Title: Building A 'Hello World' Docker Image For A Python Aiohhtp Service
+Title: Building A 'Hello World' Docker Image For A Python Service
 Date: 2017-04-16 10:20
 Category: Articles
-Tags: python, python3, docker, aiohttp
+Tags: walkthrough, python, docker, aiohttp
 
 _Note: this walkthrough assumes you have python 3 and docker installed on your machine._
 
-What's Aiohttp?
----------------
+Aiohttp based Python serivce
+----------------------------
 
 Python 3.4 added support for asynchronous I/O code, known as [asyncio](https://docs.python.org/3/library/asyncio.html). 
 Asyncio allows writing performant code that would have previously been bottlenecked by IO performance, and has spawned 
