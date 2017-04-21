@@ -25,8 +25,10 @@ DISPLAY_PAGES_ON_MENU = True
 LINKS = ()
 
 # Social widget
-SOCIAL = (('My GitHub', 'https://github.com/RendijsSmukulis'),
-          )
+SOCIAL = (('My GitHub', 'https://github.com/RendijsSmukulis'))
+
+PLUGIN_PATHS = ['C:\\dev\\git\\pelican-plugins']
+PLUGINS = ['summary']
 
 DEFAULT_PAGINATION = 10
 

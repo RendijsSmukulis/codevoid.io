@@ -1,12 +1,8 @@
 Title: Building A 'Hello World' Docker Image For A Python Service
 Date: 2017-04-16 10:20
 Category: Articles
-Tags: walkthrough, python, docker, aiohttp
 
 _Note: this walkthrough assumes you have python 3 and docker installed on your machine._
-
-Aiohttp based Python serivce
-----------------------------
 
 Python 3.4 added support for asynchronous I/O code, known as [asyncio](https://docs.python.org/3/library/asyncio.html). 
 Asyncio allows writing performant code that would have previously been bottlenecked by IO performance, and has spawned 
@@ -16,6 +12,7 @@ client-side libraries (e.g. urllib or requests), or server-side libraries (e.g. 
 
 After a cursory search, I could not find a Docker image with a basic 'hello world' implementation of an aiohttp server,
 so decided to build one, and document the process. 
+<!-- PELICAN_END_SUMMARY -->
 
 Creating the service in Python
 ------------------------------
@@ -29,6 +26,7 @@ To start, create a directory to contain the project files, e.g. docker-aiohttp-h
 In the directory, create the 'requirements.txt' file and add the aiohttp dependency to it:
 
     aiohttp==2.0.7
+
 
 I'm pinning the version to 2.0.7 to ensure the image still works if future releases of aiohttp break backwards 
 compatibility.
@@ -155,11 +153,11 @@ received request, replying with "Hello, World!".
 ```
 
 To publish the Docker image to Docker Hub, follow the steps [here](https://docs.docker.com/engine/getstarted/step_six/). 
-I've published the image to my docker repo, and it can be run by executing:
+I've published the image to a docker repo, and it can be run by executing:
 ```
 docker run -p 5858:5858 rendijssmukulis/docker-aiohttp-hello-world
 ```
 This means the service can be run from any machine that has docker installed and has access to the docker repository, 
 e.g. in Amazon's EC2 Container Service.
 
-_The source files are published in https://github.com/RendijsSmukulis/docker-aiohttp-hello-world _
+_The entire source can be found on [github](https://github.com/RendijsSmukulis/docker-aiohttp-hello-world)_
