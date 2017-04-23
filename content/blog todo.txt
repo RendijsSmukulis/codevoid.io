@@ -1,0 +1,39 @@
+todo:
+Running Gunicorn and aiohttp in Docker
+
+- what is Gunicorn, and why do you need it?
+
+Wrapping the aiohttp service in Gunicorn
+ - continue from step1, or git clone
+ - Install gunicorn
+ - refactor the server's .py file
+ - create the config file, explain what each param means
+ - run the gunicorn version (note - this will not currently work on windows (link to bug), but will work in Linux/Macs. Will also work on docker in Win)
+
+Dockerizing the gunicorn
+ steps:
+  - make sure all new files are included in the new image
+  - pip install gunicorn
+  - run the service with gunicorn
+
+ - move all files to a separate 'server' folder
+ - copy the folder
+ - pip install
+ - use the new CMD command
+ - build the image
+ - run and verify
+
+
+
+
+write a new article, similar to https://sebest.github.io/post/protips-using-gunicorn-inside-a-docker-image/ ?
+"aiohttp is not a web server, it is a framework and needs some sort of web server, such as Gunicorn, Nginx or Apache, to accept HTTP requests which it will then operate on. 
+http://aiohttp.readthedocs.io/en/stable/deployment.html
+
+- pull my docker images
+- update them to work with gunicorn (..or not)
+- 
+- capture the perf differences 
+- deploy the service to the cloud (1 hydraload, 1 
+- 
+- create a skeleton of the article
