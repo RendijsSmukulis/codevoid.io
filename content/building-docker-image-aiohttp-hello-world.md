@@ -2,7 +2,7 @@ Title: Building A 'Hello World' Docker Image For A Python Service
 Date: 2017-04-16 10:20
 Category: Articles
 
-_Note: this walkthrough assumes you have python 3 and docker installed on your machine._
+_Note: this walkthrough assumes you have Python 3 and docker installed on your machine._
 
 Python 3.4 added support for asynchronous I/O code, known as [asyncio](https://docs.python.org/3/library/asyncio.html). 
 Asyncio allows writing performant code that would have previously been bottlenecked by IO performance, and has spawned 
@@ -74,10 +74,11 @@ Creating the Docker image
 -------------------------
 
 To run this service in Docker, we need to specify that:
-- The base image to use is the python:3 image
-- The server.py and requirements.txt files need to be included in the new image
-- PIP needs to install the dependencies listed in requirements.txt
-- The service itself needs to be run
+
+* The base image to use is the python:3 image
+* The server.py and requirements.txt files need to be included in the new image
+* PIP needs to install the dependencies listed in requirements.txt
+* The service itself needs to be run
 
 To achieve this, first create a file called 'Dockerfile' in the same directory as the other files. 
 
@@ -86,26 +87,29 @@ Add the line instructing Docker to use the python:3 base image:
 FROM python:3
 ```
 
+This will pull a base image that already has Python 3 installed, so there is no need to set it up separately.
+
 Next, add the line indicating the two files that need to be added to the new image:
 ```
 COPY server.py /
 COPY requirements.txt /
 ```
 
-Then, add the line that will install the dependencies from requirements.txt:
+Then, add the line that will install the Python application's dependencies from requirements.txt:
 ```
 RUN pip install -r requirements.txt
 ```
 
-The RUN command is executed when the image is built, as opposed to the CMD command, which is executed when 
+The RUN command is executed when the image is built, as opposed to the CMD command, which is executed when the docker image is actually run 
+(i.e. a running container is actually created).
 
-Lastly, add the line that instructs Docker to start our python service when the image is run:
+Lastly, add the line that instructs Docker to start our Python service when the image is run:
 ```
 CMD [ "python", "-u", "server.py" ]
 ```
 
-The '-u' parameter will instruct python interpreter to not buffer the output to console. Without this, the 
-python output does not seem to be forwarded to the docker host. 
+The '-u' parameter will instruct the Python interpreter to not buffer the output to console. Without this, the 
+Python output does not seem to be forwarded to the docker host. 
 
 To contrast the last two commands, `RUN` and `CMD`:
 - `RUN` will be executed during the creation of the docker image. Thus, any changes to the file system (e.g. 

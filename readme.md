@@ -10,3 +10,5 @@ Preview your site
 
     cd output
     python -m pelican.server
+
+Markdown reference for pelican: https://sourceforge.net/p/pelican-edt/wiki/markdown_syntax/
