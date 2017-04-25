@@ -48,7 +48,7 @@ Then create 'server.py' file, and add the example code, slightly modified from a
     web.run_app(app, port=5858)
 
 Install the dependencies listed in requirements.txt by running `pip install -r requirements.txt`. You can now run the 
-service, and will see it's running on port 5858 after it starts:
+service by running `python server.py`, and will see it's running on port 5858 after it starts:
 
 ```
 Connected to pydev debugger (build 163.10154.50)
@@ -165,3 +165,6 @@ This means the service can be run from any machine that has docker installed and
 e.g. in Amazon's EC2 Container Service.
 
 _The entire source can be found on [github](https://github.com/RendijsSmukulis/docker-aiohttp-hello-world)_
+
+Update: There is now a [follow-up post](//codevoid.io/running-gunicorn-aiohttp-in-docker.html) 
+describing how to run this service in prod using the Gunicorn webserver.
