@@ -164,7 +164,7 @@ docker run -p 5858:5858 rendijssmukulis/docker-aiohttp-hello-world
 This means the service can be run from any machine that has docker installed and has access to the docker repository, 
 e.g. in Amazon's EC2 Container Service.
 
-_The entire source can be found on [github](https://github.com/RendijsSmukulis/docker-aiohttp-hello-world)_
+_The source files can be found on [github](https://github.com/RendijsSmukulis/docker-aiohttp-hello-world)._
 
-Update: There is now a [follow-up post](//codevoid.io/running-gunicorn-aiohttp-in-docker.html) 
+Update: There is now a [follow-up post](//codevoid.io/hosting-a-python-web-service-in-gunicorn-and-docker.html) 
 describing how to run this service in prod using the Gunicorn webserver.

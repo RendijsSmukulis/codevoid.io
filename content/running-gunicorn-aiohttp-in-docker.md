@@ -1,15 +1,14 @@
 Title: Hosting a Python web service in Gunicorn and Docker
-Date: 2017-04-16 10:20
+Date: 2017-04-25 10:20
 Category: Articles
 
 So you've written an aiohttp (or Flask, or Tornado..) app in Python, and want to run it as a production service. 
 The easiest approach would be to simply run it in production the same way you do while developing, simply 
 by calling `python server.py`. While this is a simple approach, and works well while developing, aiohttp is
-not a actually a webserver - it's a framework that is intended to be hosted in a production-ready webserver. 
-One such webserver is [Gunicorn](http://gunicorn.org/), often used to host Python web services. The main argument for using Gunicorn
+not actually a webserver - it's a framework that is intended to be hosted in a production-ready webserver. 
+One such webserver is [Gunicorn](http://gunicorn.org/), used to host Python-based web services. The main argument for using Gunicorn
 is raw performance: Gunicorn will run enough aiohttp processes to use all available CPU cores, while aiohttp's
-development webserver would only run it in a single process. Other benefits of hosting aiohttp
-inside Gunicorn are improved security and its configurability. There is a good post on this topic found on 
+development webserver would only run it in a single process. Other benefits of using Gunicorn are improved security and its configurability. There is a good post on this topic found on 
 [serverfault](https://serverfault.com/questions/331256/why-do-i-need-nginx-and-something-like-gunicorn)
 by the Gunicorn's developer. 
 
@@ -27,8 +26,9 @@ First, install Gunicorn:
 pip install gunicorn
 ```
 
-As it currecntly stands, `server.py` will attempt to run the aiohttp's internal webserver whenever the 
-code is run as a main program, or if it is included as a module:
+Next, we need to modify `server.py` to not use the development webserver when it's included as a module. As it currecntly stands, `server.py`
+will always run the aiohttp's internal webserver:
+
     :::python
     app = web.Application()
     app.router.add_get('/', handle)
@@ -39,7 +39,7 @@ code is run as a main program, or if it is included as a module:
 
 Gunicorn will include this file as a module, and we don't want the development server to be started - but 
 it would be handy to still be able to run it from the python interpreter while developing. To achieve this,
-add this check before the line that starts the server:
+add the following check before the line that starts the server:
 
     :::python
     app = web.Application()
@@ -51,6 +51,7 @@ add this check before the line that starts the server:
 
 Next step is to create the configuration file for Gunicorn. Create a `gunicorn.conf` file in the same folder
 as `server.py`, and populate it with:
+
     :::python
     import multiprocessing
 
@@ -94,6 +95,7 @@ Running Gunicorn in Docker
 --------------------------
 
 To run Gunicorn in Docker, we'll have to modify our existing `Dockerfile` to:
+
 * include the gunicorn.conf file in the Docker image
 * install Gunicorn
 * run the service using Gunicorn rather than the Python interpreter
@@ -109,14 +111,14 @@ RUN pip install gunicorn
 ```
 Alternatively, we could have added `gunicorn` to the `requirements.txt` file, and thus have it installed
 when `pip install -r requirements.txt` is run. However, the project does not require Gunicorn to run with the 
-aiohttp's development server, so can be excluded from `requirements.txt`. 
+aiohttp's development server, so I've opted to exclude the dependency from `requirements.txt`. 
 
 Next, replace the existing `CMD` command with a call to start the Gunicorn server:
 ```
-CMD [ "gunicorn", "-c", "gunicorn.conf", "server:app" ]
+CMD ["gunicorn", "-c", "gunicorn.conf", "server:app"]
 ```
 
-After this, your `Dockerfile` should look like this:
+Your `Dockerfile` should now look like this:
 ```
 FROM python:3
 COPY server.py /
@@ -140,4 +142,4 @@ by navigating to http://127.0.0.1:5858 .
 This Docker image can now be easily shared (e.g. by uploading it to [Docker Hub](https://hub.docker.com/)) 
 and run on various platforms, such as [Amazon's EC2 Container Services](https://aws.amazon.com/ecs/getting-started/).  
 
-_The entire source can be found on [github](https://github.com/RendijsSmukulis/docker-aiohttp-gunicorn)_
+_The source files can be found on [github](https://github.com/RendijsSmukulis/docker-aiohttp-gunicorn)._
