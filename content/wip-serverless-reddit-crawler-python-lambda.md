@@ -49,6 +49,9 @@ h3: what is SNS and why are we using it?
 - good for decoupling lambdas
 - lambdas can retry 
 
+api gatweay:
+- steps 1 and 2 from the api gateway guide http://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-create-resource-and-methods.html or http://www.giantflyingsaucer.com/blog/?p=5730
+
 lambda: 
 - pip install boto3 <-- do we need to do this, or do the EC2s come with some libraries installed?
 - gets the url from the request
@@ -59,17 +62,27 @@ lambda:
 Deploy and test the Lambda
 --------------------------
 
-1. Package the lambda + libs in a zip
+1. create the SQS queue
+1. create a policy to write to sqs
 1. Deploy lambda using UI
-2. Hit the lambda with curl (but mention Insomnia), get the error
-2. Set up the rights
+1. create API gateway 
+2. Hit the lambda with curl (but mention Insomnia)
 3. Hit the lambda, get 201 back
 4. Show the logs
-5. Show the event in SNS
+5. Show the event in Sqs, mention this will consume the event
 
 
 Create the _Subreddit Article Loader_ Lambda
 --------------------------------------------
+
+The article loader is throttled to 1 request every 2 secs
+It only loads up to first 100 items, and makes only 1 call to reddit api. 
+Implementation could be changed to load more, but to avoid exceeding the rate each message in sqs should represent 1 reddit request.
+
+http://docs.aws.amazon.com/lambda/latest/dg/lambda-python-how-to-create-deployment-package.html to install PRAW ?
+available modules: https://gist.github.com/gene1wood/4a052f39490fae00e0c3
+
+
 1. Link to getting a key for reddit dev access
 2. pip install praw
 3. get the link out of SNS event & log
