@@ -67,7 +67,7 @@ Deploy and test the Lambda
 1. Deploy lambda using UI
 1. create API gateway 
 2. Hit the lambda with curl (but mention Insomnia)
-3. Hit the lambda, get 201 back
+3. Hit the lambda, get 201 back {"subreddit":"aww","sort_method":"top"}
 4. Show the logs
 5. Show the event in Sqs, mention this will consume the event
 
@@ -83,13 +83,16 @@ http://docs.aws.amazon.com/lambda/latest/dg/lambda-python-how-to-create-deployme
 available modules: https://gist.github.com/gene1wood/4a052f39490fae00e0c3
 
 
+1. create SNS topic
+2. create policy to read from and delete from sqs and write to sns, and create a lambda role 
 1. Link to getting a key for reddit dev access
 2. pip install praw
+2. Creating a Deployment Package
 3. get the link out of SNS event & log
 4. PRAW get top links, log, filter out anything that's not imgur or reddit images
 5. send each link to sqs
 
-- Why SQS not SNS???
+- Why SNS not SQS???
 
 
 
