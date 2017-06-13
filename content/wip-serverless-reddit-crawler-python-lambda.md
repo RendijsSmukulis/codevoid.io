@@ -32,7 +32,7 @@ This will load the top 100 posts from said subreddit (e.g. XXXXXXX), and then pe
 linked by each of the posts in S3.
 
 The finished pipeline works as follows:
-![Reddit Crawler Serverless Pipeline]({filename}/images/reddit-scrape-aws-pipeline.png)
+![Reddit Crawler Serverless Pipeline]({filename}/images/reddit-scrape-aws-pipeline-small.png)
 
 1. User POSTs a request to an HTTP endpoint requesting a certain subreddit to be crawled, e.g. /r/aww
 2. This request is handled by the first Lambda, titled 'HTTP API Endpoint' in the blueprit. The Lambda will create a new SNS notification, and return a '201 Created' to the user.
