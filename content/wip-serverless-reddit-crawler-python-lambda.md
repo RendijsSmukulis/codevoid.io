@@ -4,11 +4,11 @@ Category: Articles
 Status: draft
 
 Amazon recently announced Python 3.6 support for AWS Lambda, so this is a good
-time to explore what we can build with this. I decided to use Lambdas to create a data pipeline that 
+time to explore what we can build with this. I decided to use a few different Lambdas to create a data pipeline that 
 can be used for crawling top posts from a given Reddit subreddit, and store any linked
 images into S3 as a demonstration. Because how better to explore new tech than by
-downloading hundreds of cat pictures from Reddit? Better yet if we don't have to host
-a single server to achieve this.
+downloading hundreds of cat pictures from Reddit? Even better if we can do this in an
+entirely serverless manner.
 
 Pic here: 
 1. AWS Lambda
@@ -16,9 +16,9 @@ Pic here:
 3. Profit + cat pictures
 
 Lambdas are serverless, event-driven elements of the AWS platform, which means you do
-not have to worry about where to host the code, and how to scale it out. I think of them 
+not have to worry about where to host the code, and how to scale it out. You can think of them 
 as cloud-hosted functions that will be called by AWS infrastructure to respond to some 
-event, e.g. an HTTP call or a timed event.
+event, e.g. an HTTP call, SNS notification, or a timed event.
 
 This article will demonstrate how to use Lambdas to:
 
@@ -27,7 +27,7 @@ This article will demonstrate how to use Lambdas to:
 * Run on a schedule
 * Chain Lambdas to process SQS messages
 
-The pipeline will accept an HTTP request, triggering the crawl of the specified subreddit. 
+The completed pipeline will accept an HTTP request, triggering the crawl of the specified subreddit. 
 This will load the top 100 posts from said subreddit (e.g. XXXXXXX), and then persist all pictures
 linked by each of the posts in S3.
 
@@ -35,7 +35,7 @@ The finished pipeline works as follows:
 ![Reddit Crawler Serverless Pipeline]({filename}/images/reddit-scrape-aws-pipeline-small.png)
 
 1. User POSTs a request to an HTTP endpoint requesting a certain subreddit to be crawled, e.g. /r/aww
-2. This request is handled by the first Lambda, titled 'HTTP API Endpoint' in the blueprit. The Lambda will create a new SNS notification, and return a '201 Created' to the user.
+2. This request is handled by the first Lambda, titled 'HTTP API Endpoint' in the blueprint. The Lambda will create a new SNS notification, and return a '201 Created' to the user.
 3. The SNS event triggers the 'Subreddit Article Loader' Lambda, which will look up the top 100 posts in the given subreddit. It will then enqueue an SQS message for each post. 
 4. A Scheduled Lambda ('Article Download Balancer') will periodically check for new work in the SQS queue. When new messages arrive, it will invoke Download Worker Lambdas, handing out one piece of work (i.e a reddit post to process) to ech worker. 
 5. Each Worker Lambda will download the pictures linked by the reddit post they were invoked to process, and persist
@@ -75,13 +75,12 @@ Deploy and test the Lambda
 Create the _Subreddit Article Loader_ Lambda
 --------------------------------------------
 
-The article loader is throttled to 1 request every 2 secs
+The article loader is throttled to 1 request every 2 seconds.
 It only loads up to first 100 items, and makes only 1 call to reddit api. 
 Implementation could be changed to load more, but to avoid exceeding the rate each message in sqs should represent 1 reddit request.
 
 http://docs.aws.amazon.com/lambda/latest/dg/lambda-python-how-to-create-deployment-package.html to install PRAW ?
 available modules: https://gist.github.com/gene1wood/4a052f39490fae00e0c3
-
 
 1. create SNS topic
 2. create policy to read from and delete from sqs and write to sns, and create a lambda role 
