@@ -58,3 +58,55 @@ After the upload, the training process will start. Once it finishes, you can try
 newly trained bot. Note how you do not have to use the exact phrases from training data. For example,the bot will match both `hi` and `hello` to the response associated with `hi`:
 
 ![Hutoma 5]({filename}/images/hutoma5.png)
+
+You can imagine training the network with existing data sets of frequently asked questions - this
+would allow users to ask questions in fairly varied forms, and get the specified answers. 
+
+Getting more advanced
+---------------------
+
+While being able to train the bot with some pre-defined questions and answers is neat, 
+the really interesting interactions happen when the bot can perform some action; e.g. the previously
+mentioned pizza-ordering bot. 
+
+Hutoma uses two concepts to allow a bot perform an action. The task itself is called an `intent`. Example
+intents might be `order a pizza`, `call a cab` or `check weather info`. The "inputs" to these actions are (somewhat ambiguously) named
+`entities`. For example, if the pizza-ordering intent needs to know the size of the pizza and the type of the toppings, it would
+use two entities, `topping` and `size`. Think of each entity as an enum, you can specify the range of values for it,
+then the user chooses one by talking to the bot.
+
+Let's create a bot that can report the top threads in a given subreddit on [Reddit](https://www.redit.com). To report on a given 
+subreddit, the bot will need to know which subreddit we are interested in. As such, we need to create a new `entity`. In the left 
+hand menum, select the bot you created earlier, and choose `entities`.
+
+![Hutoma 6]({filename}/images/hutoma6.png)
+
+Create a new entity with a meaningful name, e.g. `subreddit`. Then add some subreddit names you want the bot to be able to query and save it.
+
+![Hutoma 7]({filename}/images/hutoma7.png)
+
+Next we need to create an intent that represents the "get top subreddit threads" task. Navigate to the `intents` section. In there,
+name your new intent (e.g. `subreddit-top-thread-loader`) and click create. 
+
+Under `User Expressions`, enter some sample queries users might initiate the intent (task) with. For the Reddit intent, I've used:
+
+```
+what's new on reddit
+what's hot on reddit
+what's hot in worldnews
+what's new on /r/cars
+```
+
+Including the entity value in the query allows the bot to figure out which subreddit the user is interested in without 
+queryign for it separately.
+
+Next, you need to add the `subreddit` entity and give a sample `prompt` for it. Bot will use this prompt to ask the user to
+choose a subreddit if they haven't already done so.
+
+![Hutoma 8]({filename}/images/hutoma8.png)
+
+Next, choose a default response, e.g. `I'll get right on it!`. Normally, when using a webhook, the bot would only use the
+response when the call to the webhook failed. For our initial testing without a webhook, we'll always expect to see the 
+default response.
+
+
