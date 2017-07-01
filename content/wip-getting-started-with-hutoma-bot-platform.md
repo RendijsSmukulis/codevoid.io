@@ -1,7 +1,6 @@
 Title: Getting started with Hu:toma.ai chat bot platform
-Date: 2017-05-13 10:20
+Date: 2017-07-01 10:20
 Category: Articles
-Status: draft
 
 [Hu:toma](https://www.hutoma.com/) recently launched their open beta, and since I've had 
 a bit of fun playing around with it, I think it deserves a quick post. So what is Hu:toma?
@@ -13,7 +12,7 @@ APIs. For example:
 
 Hu:toma lets developers upload some training data in the form of example conversations. 
 It then trains the bot using their deep learning network to allow the bots to understand 
-variations of the questions and requests from the users. For more info, watch this [95 second video](https://www.youtube.com/watch?v=fB82FyKD674) or check out their [site](https://www.hutoma.com/).
+variations of the questions and requests from the users. For more info, watch this [quick video](https://www.youtube.com/watch?v=fB82FyKD674) or check out their [site](https://www.hutoma.com/).
 
 Getting started
 ---------------
@@ -23,7 +22,7 @@ writing there was a wait list for the beta, but this might change soon. To join 
 hit their page and click Login, it'll ask for your email. Once you receive the invite, you can
 start training your chat-bot army. 
 
-Once that's sorted, you can log in to the (console)[https://console.hutoma.com] and create your 
+Once that's sorted, you can log in to the [console](https://console.hutoma.com) and create your 
 first bot. Hit the green `Create Bot` button:
 
 ![Hutoma 1]({filename}/images/hutoma1.png)
@@ -109,40 +108,97 @@ Next, choose a default response, e.g. `I'll get right on it!`. Normally, when us
 response when the call to the webhook failed. For our initial testing without a webhook, we'll always expect to see the 
 default response.
 
-Hit [# train bot?], and chat away [ pic! ]
+Hit `Save Intent`, and, after the re-training is done, you can chat away: 
+
+![Hutoma 9]({filename}/images/hutoma9.png)
+
+Note the bot queries me for the specific subreddit when I didn't mention it in the first question, but
+picks up the subreddit name when I ask `what's new on /r/worldnews`.
 
 Getting the message across
 --------------------------
 
-{  
-   "intentName":"subreddit-top-thread-loader",
-   "memoryVariables":[  
-      {  
-         "entity":"subreddit",
-         "value":"cars",
-         "mandatory":true,
-         "entity_keys":[  
-            "aww",
-            "cars",
-            "cats",
-            "showerthoughts",
-            "unitedkingdom",
-            "worldnews"
-         ],
-         "prompts":[  
-            "Which subreddit are you interested in?"
-         ],
-         "times_prompted":0,
-         "max_prompts":3,
-         "persistent":false,
-         "system_entity":false
-      }
-   ],
-   "chatResult":{  
-      "score":1.0,
-      "query":"what's new on /r/cars?",
-      "answer":"I'll get right on it!",
-      "elapsedTime":2.764
-   }
-}
+Now that our bot can interpret what we want to load from Reddit, let's actually enable it to load some threads from
+the requested subreddit. To achieve this, we need a web service that can act as a proxy between our bot
+and Reddit. It will provide an interface for the bot to call, retrieve some data from Reddit, then return that to
+the bot. 
+
+I used [AWS API Gateway and a Lambda function](http://docs.aws.amazon.com/apigateway/latest/developerguide/getting-started.html) to react to requests, but that's just one of the many posible solutions. To integrate your bot with an API, all you need to do is provide the API endpoint's
+URL in the WebHook part of the bot's configuration. The endpoint needs to accept a POST request.
+
+Here's a sample request Hutoma bot fires at the API:
+
+    :::json
+    {  
+        "intentName":"subreddit-top-thread-loader",
+        "memoryVariables":[  
+            {  
+                "entity":"subreddit",
+                "value":"cars",
+                "mandatory":true,
+                "entity_keys":[  
+                    "aww",
+                    "cars",
+                    "cats",
+                    "showerthoughts",
+                    "unitedkingdom",
+                    "worldnews"
+                ],
+                "prompts":[  
+                    "Which subreddit are you interested in?"
+                ],
+                "times_prompted":0,
+                "max_prompts":3,
+                "persistent":false,
+                "system_entity":false
+            }
+        ],
+        "chatResult":{  
+            "score":1.0,
+            "query":"what's new on /r/cars?",
+            "answer":"I'll get right on it!",
+            "elapsedTime":2.764
+        }
+    }
+
+It includes everything we need to react to the request:
+
+- The original query by the user
+- The intent's entity type (`subreddit`)
+- The value of the entity, `cars` in this case, meaning the user is interested in the `/r/cars` subreddit.
+
+I used reddit's [praw](https://praw.readthedocs.io/en/latest/) library to load the new submissions. Here's the code for the 
+Lambda function:
+
+    :::python
+    import praw
+
+    reddit = praw.Reddit(client_id='[YOUR CLIENT ID HERE]',
+                        client_secret='[YOUR CLIENT SECRET]',
+                        user_agent='AWS Lambda PRAW client')
+
+    def lambda_handler(event, context):
+        # Extract the required subreddit's name from the Hutoma request
+        kvps = _get_kvp_from_hutoma_request(event)
+        subreddit = kvps['subreddit']
+
+        # Load some data from the subreddit
+        titles = []
+        for submission in reddit.subreddit(subreddit).hot(limit=5):
+            titles.append('"{}": https://reddit.com{}'.format(submission.title, submission.permalink))
+        
+        # Return to the Hutoma bot    
+        return {"text": ' \r\n\r\n'.join(titles)}
+
+    def _get_kvp_from_hutoma_request(request):
+        """Transforms the Hutoma Request into a key-value dictionary"""
+        entity_dict = {} 
+        for h_var in request['memoryVariables']:
+            h_value = h_var['entity']
+            if h_value not in entity_dict:
+                entity_dict[h_value] = h_var['value']
+    
+        return entity_dict
+
+This will return the titles and URLs of the top five hot submissions in the requested subreddit. After adding the API's URL to the bot's WebHook setting, you can chat with the bot and have it fetch data from the new endpoint:
 
