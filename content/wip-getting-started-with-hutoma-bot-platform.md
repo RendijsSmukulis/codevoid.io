@@ -62,8 +62,8 @@ newly trained bot. Note how you do not have to use the exact phrases from traini
 You can imagine training the network with existing data sets of frequently asked questions - this
 would allow users to ask questions in fairly varied forms, and get the specified answers. 
 
-Getting more advanced
----------------------
+Giving the bots a purpose
+-------------------------
 
 While being able to train the bot with some pre-defined questions and answers is neat, 
 the really interesting interactions happen when the bot can perform some action; e.g. the previously
@@ -109,4 +109,40 @@ Next, choose a default response, e.g. `I'll get right on it!`. Normally, when us
 response when the call to the webhook failed. For our initial testing without a webhook, we'll always expect to see the 
 default response.
 
+Hit [# train bot?], and chat away [ pic! ]
+
+Getting the message across
+--------------------------
+
+{  
+   "intentName":"subreddit-top-thread-loader",
+   "memoryVariables":[  
+      {  
+         "entity":"subreddit",
+         "value":"cars",
+         "mandatory":true,
+         "entity_keys":[  
+            "aww",
+            "cars",
+            "cats",
+            "showerthoughts",
+            "unitedkingdom",
+            "worldnews"
+         ],
+         "prompts":[  
+            "Which subreddit are you interested in?"
+         ],
+         "times_prompted":0,
+         "max_prompts":3,
+         "persistent":false,
+         "system_entity":false
+      }
+   ],
+   "chatResult":{  
+      "score":1.0,
+      "query":"what's new on /r/cars?",
+      "answer":"I'll get right on it!",
+      "elapsedTime":2.764
+   }
+}
 
