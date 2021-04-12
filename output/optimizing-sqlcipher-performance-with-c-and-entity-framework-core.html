@@ -1,0 +1,311 @@
+<!DOCTYPE HTML>
+<!--
+	Strata by HTML5 UP
+	html5up.net | @ajlkn
+	Free for personal and commercial use under the CCA 3.0 license (html5up.net/license)
+-->
+<html>
+	<head>
+		<title>Optimizing SQLCipher performance with C# and Entity Framework Core</title>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<!--[if lte IE 8]><script src="theme/js/ie/html5shiv.js"></script><![endif]-->
+		<link rel="stylesheet" href="theme/css/main.css" />		
+        <link rel="stylesheet" href="theme/css/pygment.css" />		
+        
+        <link href="http://codevoid.io/feeds/all.atom.xml" type="application/atom+xml" rel="alternate" title="Code Void Atom Feed" />
+
+
+		<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"/>
+		<link rel="icon" type="image/png" href="/favicon-32x32.png" sizes="32x32"/>
+		<link rel="icon" type="image/png" href="/favicon-16x16.png" sizes="16x16"/>
+		<link rel="manifest" href="/manifest.json"/>
+		<link rel="mask-icon" href="/safari-pinned-tab.svg" color="#5bbad5"/>
+		<meta name="theme-color" content="#ffffff"/>
+		<script>
+			(function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+			(i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+			m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+			})(window,document,'script','https://www.google-analytics.com/analytics.js','ga');
+			ga('create', 'UA-96943773-1', 'auto');
+			ga('send', 'pageview');
+		</script>
+		<!--[if lte IE 8]><link rel="stylesheet" href="theme/css/ie8.css" /><![endif]-->
+        <!--[if IE]>
+            <script src="http://html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+        <![endif]-->
+	</head>
+
+    <body id="top">
+
+		<!-- Header -->
+			<header id="header">
+				<div class="inner">
+					<a href="#" class="image avatar"><img src="theme/images/avatar.jpg" alt="" /></a>
+					<h1><strong>Code Void</strong> blog,<br />
+					programming and ramblings<br />
+					by <a href=".">Rendijs Smukulis</a></h1>
+				</div>
+			</header>
+
+            
+	<!-- Main -->
+	<div id="main">
+
+    <!-- index...-->
+<section id="one">
+	<section id="content" class="body">
+		<article>
+					<header class="major">
+				<h2 class="blog-post-title archive-header"><a href="./optimizing-sqlcipher-performance-with-c-and-entity-framework-core.html" rel="bookmark"
+						title="Permalink to Optimizing SQLCipher performance with C# and Entity Framework Core">Optimizing SQLCipher performance with C# and Entity Framework Core</a></h2>
+			</header>
+				
+			<div class="post-preview"><footer class="post-info">
+        <span id="article-date-span"><em>Sun 11 April 2021</em></span>
+</footer><!-- /.post-info --><p>Recently, I've had to implement a secure storage service in a .NET5 C# application, and ended up selecting SQLCipher as the encrypted store for the data. </p>
+<p>During the work, I found a lot of misleading advice online which boils down to "SQLCipher with Entity Framework is too slow to be useable", so this blog post is here to alleviate these claims. 
+This blog post will be a high-level walk-through on how I tuned its performance under Entity Framework Core from "unuseable" to "this will work well for us".</p>
+<p>So what's SQLCipher, and why would you use it? One can think of SQLCipher as "SQLite, but with encryption". Their pitch is "Open-source extension to SQLite; Transparent, 256-bit AES encryption". Since using Entity Framework Core with SQLite is a fairly standard practice for local storage in apps, this seemed like an easy choice to make.</p>
+<h2>Naive Implementation</h2>
+<p>Setting up a project to try the SQLCipher/EF Core combination was straight-forward:</p>
+<ul>
+<li>Set up EF Core with SQLite as described <a href="https://docs.microsoft.com/en-us/ef/core/get-started/overview/first-app?tabs=netcore-cli">here</a></li>
+<li>then replace SQLite with SQLCipher as described <a href="https://docs.microsoft.com/en-us/dotnet/standard/data/sqlite/encryption?tabs=netcore-cli">here</a></li>
+</ul>
+<p>Let's modify the <code>OnConfiguring</code> method to include the password in the connection string, and give it a quick performance test.</p>
+<div class="highlight"><pre><span></span><code>        <span class="n">protected</span> <span class="n">override</span> <span class="n">void</span> <span class="n">OnConfiguring</span><span class="p">(</span><span class="n">DbContextOptionsBuilder</span> <span class="n">options</span><span class="p">)</span>
+        <span class="p">{</span>
+            <span class="k">var</span> <span class="n">connString</span> <span class="o">=</span> <span class="n">new</span> <span class="n">SqliteConnectionStringBuilder</span>
+            <span class="p">{</span>
+                <span class="n">DataSource</span> <span class="o">=</span> <span class="s2">&quot;blogging.db&quot;</span><span class="p">,</span>
+                <span class="n">Password</span> <span class="o">=</span> <span class="s2">&quot;password1&quot;</span><span class="p">,</span>
+            <span class="p">}</span><span class="o">.</span><span class="n">ToString</span><span class="p">();</span>
+
+            <span class="n">options</span><span class="o">.</span><span class="n">UseSqlite</span><span class="p">(</span><span class="n">connString</span><span class="p">);</span>
+        <span class="p">}</span>
+</code></pre></div>
+
+<p>To keep this article somewhat short, I'll be looking at two metrics: </p>
+<ul>
+<li>Time to write a new object to the DB <em>without</em> a pre-existing DB connection - further called a "first write"</li>
+<li>and time to write a new object to the DB <em>with</em> a pre-existing DB connection - further called a "subsequent write".</li>
+</ul>
+<p>So let's do a quick write-performance check:</p>
+<div class="highlight"><pre><span></span><code>                    <span class="k">for</span> <span class="p">(</span><span class="k">var</span> <span class="n">j</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">j</span> <span class="o">&lt;</span> <span class="n">innerIterations</span><span class="p">;</span> <span class="n">j</span><span class="o">++</span><span class="p">)</span>
+                    <span class="p">{</span>
+                        <span class="n">using</span> <span class="p">(</span><span class="k">var</span> <span class="n">db</span> <span class="o">=</span> <span class="n">new</span> <span class="n">BloggingContext</span><span class="p">())</span>
+                        <span class="p">{</span>
+                            <span class="k">var</span> <span class="n">blog</span> <span class="o">=</span> <span class="n">new</span> <span class="n">Blog</span> <span class="p">{</span> <span class="n">Url</span> <span class="o">=</span> <span class="s2">&quot;http://some.blog.com/post&quot;</span> <span class="p">};</span>
+                            <span class="k">var</span> <span class="n">sw</span> <span class="o">=</span> <span class="n">Stopwatch</span><span class="o">.</span><span class="n">StartNew</span><span class="p">();</span>
+                            <span class="n">db</span><span class="o">.</span><span class="n">Blogs</span><span class="o">.</span><span class="n">Add</span><span class="p">(</span><span class="n">blog</span><span class="p">);</span>
+                            <span class="n">db</span><span class="o">.</span><span class="n">SaveChanges</span><span class="p">();</span>
+                            <span class="n">sw</span><span class="o">.</span><span class="n">Stop</span><span class="p">();</span>
+                        <span class="p">}</span>
+                    <span class="p">}</span>
+</code></pre></div>
+
+<p>Note that for simplicity some code has not been included in the listings, e.g. the code to warm-up the app and DB before first performance runs.</p>
+<p><img alt="" src="./images/2021-04-11-09-59-46.png"></p>
+<p>I can see where the complaints about performance come from. 600ms to write a simple object to the database? Users will definitely notice the delay. To be fair, this is our worst-case-on-purpose attempt. We're not reusing the DBContext between calls, so let's fix that first.</p>
+<p>Let's modify the loop to reuse the DBContext:</p>
+<div class="highlight"><pre><span></span><code>                    <span class="n">using</span> <span class="p">(</span><span class="k">var</span> <span class="n">db</span> <span class="o">=</span> <span class="n">new</span> <span class="n">BloggingContext</span><span class="p">())</span>
+                    <span class="p">{</span>
+                        <span class="k">for</span> <span class="p">(</span><span class="k">var</span> <span class="n">j</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">j</span> <span class="o">&lt;</span> <span class="n">innerIterations</span><span class="p">;</span> <span class="n">j</span><span class="o">++</span><span class="p">)</span>
+                        <span class="p">{</span>
+                            <span class="k">var</span> <span class="n">blog</span> <span class="o">=</span> <span class="n">new</span> <span class="n">Blog</span> <span class="p">{</span> <span class="n">Url</span> <span class="o">=</span> <span class="s2">&quot;http://some.blog.com/post&quot;</span> <span class="p">};</span>
+                            <span class="k">var</span> <span class="n">sw</span> <span class="o">=</span> <span class="n">Stopwatch</span><span class="o">.</span><span class="n">StartNew</span><span class="p">();</span>
+                            <span class="n">db</span><span class="o">.</span><span class="n">Blogs</span><span class="o">.</span><span class="n">Add</span><span class="p">(</span><span class="n">blog</span><span class="p">);</span>
+                            <span class="n">db</span><span class="o">.</span><span class="n">SaveChanges</span><span class="p">();</span>
+                            <span class="n">sw</span><span class="o">.</span><span class="n">Stop</span><span class="p">();</span>
+                        <span class="p">}</span>
+                    <span class="p">}</span>
+</code></pre></div>
+
+<p><img alt="" src="./images/2021-04-11-10-03-15.png"></p>
+<p>I would have expected to see an improvement in the "subsequent writes", but that's not the case. Time to figure out what's happening behind the scenes.</p>
+<h2>Step 1: We need to know what's happening</h2>
+<p>Without seeing what queries EF Core is firing at SQLCipher (and their timings), we're flying blind. First step is to enable debugging in EF Core.</p>
+<p>Replace </p>
+<div class="highlight"><pre><span></span><code>            options.UseSqlite(c);
+</code></pre></div>
+
+<p>with</p>
+<div class="highlight"><pre><span></span><code>            options.
+                LogTo(c =&gt; Debug.WriteLine(c)).
+                EnableSensitiveDataLogging().
+                UseSqlite(c);
+</code></pre></div>
+
+<p>Now our debug spew shows us in good detail:</p>
+<ul>
+<li>what EF Core is doing,</li>
+<li>what queries are fired at SQLCipher, </li>
+<li>how much time each query takes.</li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="n">dbug</span><span class="o">:</span> <span class="mi">4</span><span class="sr">/11/</span><span class="mi">2021</span> <span class="mi">10</span><span class="o">:</span><span class="mi">29</span><span class="o">:</span><span class="mf">50.853</span> <span class="n">RelationalEventId</span><span class="o">.</span><span class="na">ConnectionOpening</span><span class="o">[</span><span class="mi">20000</span><span class="o">]</span> <span class="o">(</span><span class="n">Microsoft</span><span class="o">.</span><span class="na">EntityFrameworkCore</span><span class="o">.</span><span class="na">Database</span><span class="o">.</span><span class="na">Connection</span><span class="o">)</span> 
+      <span class="n">Opening</span> <span class="n">connection</span> <span class="n">to</span> <span class="n">database</span> <span class="s1">&#39;main&#39;</span> <span class="n">on</span> <span class="n">server</span> <span class="s1">&#39;blogging.db&#39;</span><span class="o">.</span>
+<span class="n">dbug</span><span class="o">:</span> <span class="mi">4</span><span class="sr">/11/</span><span class="mi">2021</span> <span class="mi">10</span><span class="o">:</span><span class="mi">29</span><span class="o">:</span><span class="mf">51.439</span> <span class="n">RelationalEventId</span><span class="o">.</span><span class="na">ConnectionOpened</span><span class="o">[</span><span class="mi">20001</span><span class="o">]</span> <span class="o">(</span><span class="n">Microsoft</span><span class="o">.</span><span class="na">EntityFrameworkCore</span><span class="o">.</span><span class="na">Database</span><span class="o">.</span><span class="na">Connection</span><span class="o">)</span> 
+      <span class="n">Opened</span> <span class="n">connection</span> <span class="n">to</span> <span class="n">database</span> <span class="s1">&#39;main&#39;</span> <span class="n">on</span> <span class="n">server</span> <span class="s1">&#39;blogging.db&#39;</span><span class="o">.</span>
+<span class="n">dbug</span><span class="o">:</span> <span class="mi">4</span><span class="sr">/11/</span><span class="mi">2021</span> <span class="mi">10</span><span class="o">:</span><span class="mi">29</span><span class="o">:</span><span class="mf">51.443</span> <span class="n">RelationalEventId</span><span class="o">.</span><span class="na">TransactionStarting</span><span class="o">[</span><span class="mi">20209</span><span class="o">]</span> <span class="o">(</span><span class="n">Microsoft</span><span class="o">.</span><span class="na">EntityFrameworkCore</span><span class="o">.</span><span class="na">Database</span><span class="o">.</span><span class="na">Transaction</span><span class="o">)</span> 
+      <span class="n">Beginning</span> <span class="n">transaction</span> <span class="k">with</span> <span class="n">isolation</span> <span class="n">level</span> <span class="s1">&#39;Unspecified&#39;</span><span class="o">.</span>
+<span class="o">...</span>
+<span class="n">dbug</span><span class="o">:</span> <span class="mi">4</span><span class="sr">/11/</span><span class="mi">2021</span> <span class="mi">10</span><span class="o">:</span><span class="mi">29</span><span class="o">:</span><span class="mf">51.568</span> <span class="n">RelationalEventId</span><span class="o">.</span><span class="na">TransactionCommitted</span><span class="o">[</span><span class="mi">20202</span><span class="o">]</span> <span class="o">(</span><span class="n">Microsoft</span><span class="o">.</span><span class="na">EntityFrameworkCore</span><span class="o">.</span><span class="na">Database</span><span class="o">.</span><span class="na">Transaction</span><span class="o">)</span> 
+      <span class="n">Committed</span> <span class="n">transaction</span><span class="o">.</span>
+<span class="n">dbug</span><span class="o">:</span> <span class="mi">4</span><span class="sr">/11/</span><span class="mi">2021</span> <span class="mi">10</span><span class="o">:</span><span class="mi">29</span><span class="o">:</span><span class="mf">51.571</span> <span class="n">RelationalEventId</span><span class="o">.</span><span class="na">ConnectionClosing</span><span class="o">[</span><span class="mi">20002</span><span class="o">]</span> <span class="o">(</span><span class="n">Microsoft</span><span class="o">.</span><span class="na">EntityFrameworkCore</span><span class="o">.</span><span class="na">Database</span><span class="o">.</span><span class="na">Connection</span><span class="o">)</span> 
+      <span class="n">Closing</span> <span class="n">connection</span> <span class="n">to</span> <span class="n">database</span> <span class="s1">&#39;main&#39;</span> <span class="n">on</span> <span class="n">server</span> <span class="s1">&#39;blogging.db&#39;</span><span class="o">.</span>
+<span class="n">dbug</span><span class="o">:</span> <span class="mi">4</span><span class="sr">/11/</span><span class="mi">2021</span> <span class="mi">10</span><span class="o">:</span><span class="mi">29</span><span class="o">:</span><span class="mf">51.585</span> <span class="n">RelationalEventId</span><span class="o">.</span><span class="na">ConnectionClosed</span><span class="o">[</span><span class="mi">20003</span><span class="o">]</span> <span class="o">(</span><span class="n">Microsoft</span><span class="o">.</span><span class="na">EntityFrameworkCore</span><span class="o">.</span><span class="na">Database</span><span class="o">.</span><span class="na">Connection</span><span class="o">)</span> 
+      <span class="n">Closed</span> <span class="n">connection</span> <span class="n">to</span> <span class="n">database</span> <span class="s1">&#39;main&#39;</span> <span class="n">on</span> <span class="n">server</span> <span class="s1">&#39;blogging.db&#39;</span><span class="o">.</span>
+<span class="n">dbug</span><span class="o">:</span> <span class="mi">4</span><span class="sr">/11/</span><span class="mi">2021</span> <span class="mi">10</span><span class="o">:</span><span class="mi">29</span><span class="o">:</span><span class="mf">51.587</span> <span class="n">RelationalEventId</span><span class="o">.</span><span class="na">TransactionDisposed</span><span class="o">[</span><span class="mi">20204</span><span class="o">]</span> <span class="o">(</span><span class="n">Microsoft</span><span class="o">.</span><span class="na">EntityFrameworkCore</span><span class="o">.</span><span class="na">Database</span><span class="o">.</span><span class="na">Transaction</span><span class="o">)</span> 
+      <span class="n">Disposing</span> <span class="n">transaction</span><span class="o">.</span>
+<span class="o">...</span>
+<span class="n">dbug</span><span class="o">:</span> <span class="mi">4</span><span class="sr">/11/</span><span class="mi">2021</span> <span class="mi">10</span><span class="o">:</span><span class="mi">29</span><span class="o">:</span><span class="mf">51.635</span> <span class="n">RelationalEventId</span><span class="o">.</span><span class="na">ConnectionOpening</span><span class="o">[</span><span class="mi">20000</span><span class="o">]</span> <span class="o">(</span><span class="n">Microsoft</span><span class="o">.</span><span class="na">EntityFrameworkCore</span><span class="o">.</span><span class="na">Database</span><span class="o">.</span><span class="na">Connection</span><span class="o">)</span> 
+      <span class="n">Opening</span> <span class="n">connection</span> <span class="n">to</span> <span class="n">database</span> <span class="s1">&#39;main&#39;</span> <span class="n">on</span> <span class="n">server</span> <span class="s1">&#39;blogging.db&#39;</span><span class="o">.</span>
+<span class="n">dbug</span><span class="o">:</span> <span class="mi">4</span><span class="sr">/11/</span><span class="mi">2021</span> <span class="mi">10</span><span class="o">:</span><span class="mi">29</span><span class="o">:</span><span class="mf">52.197</span> <span class="n">RelationalEventId</span><span class="o">.</span><span class="na">ConnectionOpened</span><span class="o">[</span><span class="mi">20001</span><span class="o">]</span> <span class="o">(</span><span class="n">Microsoft</span><span class="o">.</span><span class="na">EntityFrameworkCore</span><span class="o">.</span><span class="na">Database</span><span class="o">.</span><span class="na">Connection</span><span class="o">)</span> 
+      <span class="n">Opened</span> <span class="n">connection</span> <span class="n">to</span> <span class="n">database</span> <span class="s1">&#39;main&#39;</span> <span class="n">on</span> <span class="n">server</span> <span class="s1">&#39;blogging.db&#39;</span><span class="o">.</span>
+<span class="o">...</span>
+<span class="n">dbug</span><span class="o">:</span> <span class="mi">4</span><span class="sr">/11/</span><span class="mi">2021</span> <span class="mi">10</span><span class="o">:</span><span class="mi">29</span><span class="o">:</span><span class="mf">52.229</span> <span class="n">RelationalEventId</span><span class="o">.</span><span class="na">TransactionCommitted</span><span class="o">[</span><span class="mi">20202</span><span class="o">]</span> <span class="o">(</span><span class="n">Microsoft</span><span class="o">.</span><span class="na">EntityFrameworkCore</span><span class="o">.</span><span class="na">Database</span><span class="o">.</span><span class="na">Transaction</span><span class="o">)</span> 
+      <span class="n">Committed</span> <span class="n">transaction</span><span class="o">.</span>
+<span class="n">dbug</span><span class="o">:</span> <span class="mi">4</span><span class="sr">/11/</span><span class="mi">2021</span> <span class="mi">10</span><span class="o">:</span><span class="mi">29</span><span class="o">:</span><span class="mf">52.231</span> <span class="n">RelationalEventId</span><span class="o">.</span><span class="na">ConnectionClosing</span><span class="o">[</span><span class="mi">20002</span><span class="o">]</span> <span class="o">(</span><span class="n">Microsoft</span><span class="o">.</span><span class="na">EntityFrameworkCore</span><span class="o">.</span><span class="na">Database</span><span class="o">.</span><span class="na">Connection</span><span class="o">)</span> 
+      <span class="n">Closing</span> <span class="n">connection</span> <span class="n">to</span> <span class="n">database</span> <span class="s1">&#39;main&#39;</span> <span class="n">on</span> <span class="n">server</span> <span class="s1">&#39;blogging.db&#39;</span><span class="o">.</span>
+<span class="n">dbug</span><span class="o">:</span> <span class="mi">4</span><span class="sr">/11/</span><span class="mi">2021</span> <span class="mi">10</span><span class="o">:</span><span class="mi">29</span><span class="o">:</span><span class="mf">52.238</span> <span class="n">RelationalEventId</span><span class="o">.</span><span class="na">ConnectionClosed</span><span class="o">[</span><span class="mi">20003</span><span class="o">]</span> <span class="o">(</span><span class="n">Microsoft</span><span class="o">.</span><span class="na">EntityFrameworkCore</span><span class="o">.</span><span class="na">Database</span><span class="o">.</span><span class="na">Connection</span><span class="o">)</span> 
+      <span class="n">Closed</span> <span class="n">connection</span> <span class="n">to</span> <span class="n">database</span> <span class="s1">&#39;main&#39;</span> <span class="n">on</span> <span class="n">server</span> <span class="s1">&#39;logging.db&#39;</span><span class="o">.</span>
+<span class="n">dbug</span><span class="o">:</span> <span class="mi">4</span><span class="sr">/11/</span><span class="mi">2021</span> <span class="mi">10</span><span class="o">:</span><span class="mi">29</span><span class="o">:</span><span class="mf">52.240</span> <span class="n">RelationalEventId</span><span class="o">.</span><span class="na">TransactionDisposed</span><span class="o">[</span><span class="mi">20204</span><span class="o">]</span> <span class="o">(</span><span class="n">Microsoft</span><span class="o">.</span><span class="na">EntityFrameworkCore</span><span class="o">.</span><span class="na">Database</span><span class="o">.</span><span class="na">Transaction</span><span class="o">)</span> 
+      <span class="n">Disposing</span> <span class="n">transaction</span><span class="o">.</span>
+</code></pre></div>
+
+<p>A couple insights here: </p>
+<ul>
+<li><code>ConnectionOpening</code> happens at 10:29:50.853, <code>ConnectionOpened</code> at 10:29:51.439, nearly 600 ms to open a connection</li>
+<li>Despite us reusing the DB context, the connection is closed after the first write, and re-opened on the second write, incurring another delay of nearly 600 ms</li>
+</ul>
+<h2>Step 2: Keep DB Context's Connection Alive</h2>
+<p>First, let's solve the second issue: connection being closed, despite us keeping the DB context. The way to force EF Core to keep the connection open is to open the connection manually in <code>OnConfiguring</code>:</p>
+<div class="highlight"><pre><span></span><code>        <span class="n">protected</span> <span class="n">override</span> <span class="n">void</span> <span class="n">OnConfiguring</span><span class="p">(</span><span class="n">DbContextOptionsBuilder</span> <span class="n">options</span><span class="p">)</span>
+        <span class="p">{</span>
+            <span class="k">var</span> <span class="n">connString</span> <span class="o">=</span> <span class="n">new</span> <span class="n">SqliteConnectionStringBuilder</span>
+            <span class="p">{</span>
+                <span class="n">DataSource</span> <span class="o">=</span> <span class="s2">&quot;blogging.db&quot;</span><span class="p">,</span>
+                <span class="n">Password</span> <span class="o">=</span> <span class="s2">&quot;password1&quot;</span><span class="p">,</span>
+            <span class="p">}</span><span class="o">.</span><span class="n">ToString</span><span class="p">();</span>
+
+            <span class="k">var</span> <span class="n">c</span> <span class="o">=</span> <span class="n">new</span> <span class="n">SqliteConnection</span><span class="p">(</span><span class="n">connString</span><span class="p">);</span>
+            <span class="n">c</span><span class="o">.</span><span class="n">Open</span><span class="p">();</span>
+
+            <span class="n">options</span><span class="o">.</span><span class="n">UseSqlite</span><span class="p">(</span><span class="n">c</span><span class="p">);</span>
+        <span class="p">}</span>
+</code></pre></div>
+
+<p>We can verify in the debug spew that EF Core no longer closes the connection, and re-run the perf test:</p>
+<p><img alt="" src="./images/2021-04-11-10-41-55.png"></p>
+<p>The sub-sequent writes no longer incur the connection delay, and are sub-20ms now. </p>
+<h2>Step 3: Reduce The First-Connection Latency</h2>
+<p>SQLCipher uses 256-bit AES encryption. You might have noticed we're not giving it a 256-bit key, but a shorter ASCII password instead. This means SQLCipher needs to generate an AES key from the given password (i.e. key derivation), which is computationally intensive, and takes up a good chunk of the 600 ms latency we see. </p>
+<p>However, SQLCipher also allows us to provide a 256-bit AES key which does not require the key derivation step, and can be provided as a PRAGMA statement:</p>
+<div class="highlight"><pre><span></span><code>        <span class="n">protected</span> <span class="n">override</span> <span class="n">void</span> <span class="n">OnConfiguring</span><span class="p">(</span><span class="n">DbContextOptionsBuilder</span> <span class="n">options</span><span class="p">)</span>
+        <span class="p">{</span>
+            <span class="k">var</span> <span class="n">connString</span> <span class="o">=</span> <span class="n">new</span> <span class="n">SqliteConnectionStringBuilder</span>
+            <span class="p">{</span>
+                <span class="n">DataSource</span> <span class="o">=</span> <span class="s2">&quot;blogging.db&quot;</span><span class="p">,</span>
+            <span class="p">}</span><span class="o">.</span><span class="n">ToString</span><span class="p">();</span>
+
+            <span class="k">var</span> <span class="n">c</span> <span class="o">=</span> <span class="n">new</span> <span class="n">SqliteConnection</span><span class="p">(</span><span class="n">connString</span><span class="p">);</span>
+            <span class="n">c</span><span class="o">.</span><span class="n">Open</span><span class="p">();</span>
+
+            <span class="k">var</span> <span class="n">keyString</span> <span class="o">=</span> <span class="s2">&quot;5A7134743777217A25432A462D4A614E645267556B586E3272357538782F413F&quot;</span><span class="p">;</span>
+
+            <span class="n">using</span> <span class="p">(</span><span class="k">var</span> <span class="n">command</span> <span class="o">=</span> <span class="n">c</span><span class="o">.</span><span class="n">CreateCommand</span><span class="p">())</span>
+            <span class="p">{</span>
+                <span class="n">command</span><span class="o">.</span><span class="n">CommandText</span> <span class="o">=</span> <span class="o">$</span><span class="s2">&quot;PRAGMA key = </span><span class="se">\&quot;</span><span class="s2">x&#39;{keyString}&#39;</span><span class="se">\&quot;</span><span class="s2">;&quot;</span><span class="p">;</span>
+                <span class="n">command</span><span class="o">.</span><span class="n">ExecuteNonQuery</span><span class="p">();</span>
+            <span class="p">}</span>
+
+            <span class="n">options</span><span class="o">.</span><span class="n">UseSqlite</span><span class="p">(</span><span class="n">c</span><span class="p">);</span>
+        <span class="p">}</span>
+</code></pre></div>
+
+<p>And updated performance test:</p>
+<p><img alt="" src="./images/2021-04-11-11-08-57.png"></p>
+<h2>Step 4: Disable Change Tracking, If Not Using It</h2>
+<p>In certain situations, we can disable EF Core's change tracking, as per <a href="https://docs.microsoft.com/en-us/dotnet/api/microsoft.entityframeworkcore.dbcontextoptionsbuilder.usequerytrackingbehavior?view=efcore-5.0">documentation here</a>: </p>
+<blockquote>
+<p>Disabling change tracking is useful for read-only scenarios because it avoids the overhead of setting up change tracking for each entity instance. You should not disable change tracking if you want to manipulate entity instances and persist those changes to the database using SaveChanges().</p>
+</blockquote>
+<p>Our application's storage layer does its own change tracking, so we do not need to rely on EF Core for it. If you find yourself in a similar situation, shave off some startup overhead by disabling tracking in the DB context, where approppriate: </p>
+<div class="highlight"><pre><span></span><code><span class="n">using</span> <span class="p">(</span><span class="k">var</span> <span class="n">db</span> <span class="o">=</span> <span class="n">new</span> <span class="n">BloggingContext</span><span class="p">())</span>
+<span class="p">{</span>
+    <span class="n">db</span><span class="o">.</span><span class="n">ChangeTracker</span><span class="o">.</span><span class="n">QueryTrackingBehavior</span> <span class="o">=</span> <span class="n">QueryTrackingBehavior</span><span class="o">.</span><span class="n">NoTracking</span><span class="p">;</span>
+    <span class="o">...</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p><img alt="" src="./images/2021-04-11-11-23-59.png"></p>
+<h2>Step 5: Further Tuning Of SQLite/SQLCipher</h2>
+<p>For non-EF Core specific SQLite/SQLCipher tuning I recommend <a href="https://blog.devart.com/increasing-sqlite-performance.html">Increasing SQLite Performance</a> article.</p>
+<p>The safest performance improvements you can do is changing the <code>JOURNAL_MODE</code> to <code>TRUNCATE</code> or <code>PERSIST</code>. <code>TRUNCATE</code> will truncate the log file to 0 size after a transaction is committed, rather than deleting it. <code>PERSIST</code> will fill the log file header with zeros, rather than deleting it. I found that these are quicker on a Windows system than the default <code>DELETE</code> mode.</p>
+<p>To try these out, add another command in your <code>OnConfiguring</code> method, e.g.:</p>
+<div class="highlight"><pre><span></span><code>        <span class="n">protected</span> <span class="n">override</span> <span class="n">void</span> <span class="n">OnConfiguring</span><span class="p">(</span><span class="n">DbContextOptionsBuilder</span> <span class="n">options</span><span class="p">)</span>
+        <span class="p">{</span>
+            <span class="k">var</span> <span class="n">connString</span> <span class="o">=</span> <span class="n">new</span> <span class="n">SqliteConnectionStringBuilder</span>
+            <span class="p">{</span>
+                <span class="n">DataSource</span> <span class="o">=</span> <span class="s2">&quot;blogging.db&quot;</span><span class="p">,</span>
+            <span class="p">}</span><span class="o">.</span><span class="n">ToString</span><span class="p">();</span>
+
+            <span class="k">var</span> <span class="n">c</span> <span class="o">=</span> <span class="n">new</span> <span class="n">SqliteConnection</span><span class="p">(</span><span class="n">connString</span><span class="p">);</span>
+            <span class="n">c</span><span class="o">.</span><span class="n">Open</span><span class="p">();</span>
+
+            <span class="k">var</span> <span class="n">keyString</span> <span class="o">=</span> <span class="s2">&quot;5A7134743777217A25432A462D4A614E645267556B586E3272357538782F413F&quot;</span><span class="p">;</span>
+
+            <span class="n">using</span> <span class="p">(</span><span class="k">var</span> <span class="n">command</span> <span class="o">=</span> <span class="n">c</span><span class="o">.</span><span class="n">CreateCommand</span><span class="p">())</span>
+            <span class="p">{</span>
+                <span class="n">command</span><span class="o">.</span><span class="n">CommandText</span> <span class="o">=</span> <span class="o">$</span><span class="s2">&quot;PRAGMA key = </span><span class="se">\&quot;</span><span class="s2">x&#39;{keyString}&#39;</span><span class="se">\&quot;</span><span class="s2">;&quot;</span><span class="p">;</span>
+                <span class="n">command</span><span class="o">.</span><span class="n">ExecuteNonQuery</span><span class="p">();</span>
+            <span class="p">}</span>
+
+            <span class="n">using</span> <span class="p">(</span><span class="k">var</span> <span class="n">command</span> <span class="o">=</span> <span class="n">c</span><span class="o">.</span><span class="n">CreateCommand</span><span class="p">())</span>
+            <span class="p">{</span>
+                <span class="n">command</span><span class="o">.</span><span class="n">CommandText</span> <span class="o">=</span> <span class="o">$</span><span class="s2">&quot;PRAGMA journal_mode = PERSIST;&quot;</span><span class="p">;</span>
+                <span class="n">command</span><span class="o">.</span><span class="n">ExecuteNonQuery</span><span class="p">();</span>
+            <span class="p">}</span>
+
+            <span class="n">options</span><span class="o">.</span><span class="n">UseSqlite</span><span class="p">(</span><span class="n">c</span><span class="p">);</span>
+        <span class="p">}</span>
+</code></pre></div>
+
+<p>Here's the comparison of default <code>DELETE</code> versus <code>TRUNCATE</code> and <code>PERSIST</code>:</p>
+<p><img alt="" src="./images/2021-04-11-11-33-42.png"></p>
+<p>There are further performance tuning options given in the article above, but care needs to be taken when applying them. E.g. setting <code>JOURNAL_MODE</code> to <code>MEMORY</code> gets the writes into sub-1ms performance, at the expense of DB intergrity in the case of the crash of the application or system.</p>
+			</div>
+		</article>
+	</section>
+</section>
+
+    </div>
+
+    
+	<!-- Footer -->
+	<footer id="footer">
+		<div class="inner">
+			<ul class="icons">
+				<li><a href="." class="icon fa-home"><span class="label">Home</span></a></li>
+				<li><a href="https://www.linkedin.com/in/rendijs-smukulis/" class="icon fa-linkedin"><span class="label">Twitter</span></a></li>
+				<li><a href="https://github.com/RendijsSmukulis" class="icon fa-github"><span class="label">Github</span></a></li>
+				<li><a href="http://codevoid.io/feeds/all.atom.xml" class="icon fa-rss"><span class="label">RSS Feed</span></a></li>
+			</ul>
+			<ul class="copyright">
+				<li>&copy; Rendijs/Randy Smukulis</li>
+			</ul>
+		</div>
+	</footer>
+
+	<!-- Scripts -->
+	<script src="theme/js/jquery.min.js"></script>
+	<script src="theme/js/jquery.poptrox.min.js"></script>
+	<script src="theme/js/skel.min.js"></script>
+	<script src="theme/js/util.js"></script>
+	<!--[if lte IE 8]><script src="theme/js/ie/respond.min.js"></script><![endif]-->
+	<script src="theme/js/main.js"></script>
+
+</body>
+
+</html>

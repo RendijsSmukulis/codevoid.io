@@ -1,0 +1,217 @@
+<!DOCTYPE HTML>
+<!--
+	Strata by HTML5 UP
+	html5up.net | @ajlkn
+	Free for personal and commercial use under the CCA 3.0 license (html5up.net/license)
+-->
+<html>
+	<head>
+		<title>Hosting a Python web service in Gunicorn and Docker</title>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<!--[if lte IE 8]><script src="theme/js/ie/html5shiv.js"></script><![endif]-->
+		<link rel="stylesheet" href="theme/css/main.css" />		
+        <link rel="stylesheet" href="theme/css/pygment.css" />		
+        
+        <link href="http://codevoid.io/feeds/all.atom.xml" type="application/atom+xml" rel="alternate" title="Code Void Atom Feed" />
+
+
+		<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"/>
+		<link rel="icon" type="image/png" href="/favicon-32x32.png" sizes="32x32"/>
+		<link rel="icon" type="image/png" href="/favicon-16x16.png" sizes="16x16"/>
+		<link rel="manifest" href="/manifest.json"/>
+		<link rel="mask-icon" href="/safari-pinned-tab.svg" color="#5bbad5"/>
+		<meta name="theme-color" content="#ffffff"/>
+		<script>
+			(function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+			(i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+			m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+			})(window,document,'script','https://www.google-analytics.com/analytics.js','ga');
+			ga('create', 'UA-96943773-1', 'auto');
+			ga('send', 'pageview');
+		</script>
+		<!--[if lte IE 8]><link rel="stylesheet" href="theme/css/ie8.css" /><![endif]-->
+        <!--[if IE]>
+            <script src="http://html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+        <![endif]-->
+	</head>
+
+    <body id="top">
+
+		<!-- Header -->
+			<header id="header">
+				<div class="inner">
+					<a href="#" class="image avatar"><img src="theme/images/avatar.jpg" alt="" /></a>
+					<h1><strong>Code Void</strong> blog,<br />
+					programming and ramblings<br />
+					by <a href=".">Rendijs Smukulis</a></h1>
+				</div>
+			</header>
+
+            
+	<!-- Main -->
+	<div id="main">
+
+    <!-- index...-->
+<section id="one">
+	<section id="content" class="body">
+		<article>
+					<header class="major">
+				<h2 class="blog-post-title archive-header"><a href="./hosting-a-python-web-service-in-gunicorn-and-docker.html" rel="bookmark"
+						title="Permalink to Hosting a Python web service in Gunicorn and Docker">Hosting a Python web service in Gunicorn and Docker</a></h2>
+			</header>
+				
+			<div class="post-preview"><footer class="post-info">
+        <span id="article-date-span"><em>Tue 25 April 2017</em></span>
+</footer><!-- /.post-info --><p>So you've written an aiohttp (or Flask, or Tornado..) app in Python, and want to run it as a production service. 
+The easiest approach would be to simply run it in production the same way you do while developing, simply 
+by calling <code>python server.py</code>. While this is a simple approach, and works well while developing, aiohttp is
+not actually a webserver - it's a framework that is intended to be hosted in a production-ready webserver. 
+One such webserver is <a href="http://gunicorn.org/">Gunicorn</a>, used to host Python-based web services. The main argument for using Gunicorn
+is raw performance: Gunicorn will run enough aiohttp processes to use all available CPU cores, while aiohttp's
+development webserver would only run it in a single process. Other benefits of using Gunicorn are improved security and its configurability. There is a good post on this topic found on 
+<a href="https://serverfault.com/questions/331256/why-do-i-need-nginx-and-something-like-gunicorn">serverfault</a>
+by the Gunicorn's developer. </p>
+<p>This walkthrough will start off with the code from the simple aiohttp project built in the <a href="//codevoid.io/building-a-hello-world-docker-image-for-a-python-service.html">previous
+post</a>. You can clone it 
+from <a href="https://github.com/RendijsSmukulis/docker-aiohttp-hello-world">github</a> or modify the code samples to
+match your own project. </p>
+
+
+<h2>Running Gunicorn natively</h2>
+<p>First, install Gunicorn:</p>
+<div class="highlight"><pre><span></span><code>pip install gunicorn
+</code></pre></div>
+
+<p>Next, we need to modify <code>server.py</code> to not use the development webserver when it's included as a module. As it currecntly stands, <code>server.py</code>
+will always run the aiohttp's internal webserver:</p>
+<div class="highlight"><pre><span></span><code><span class="n">app</span> <span class="o">=</span> <span class="n">web</span><span class="o">.</span><span class="n">Application</span><span class="p">()</span>
+<span class="n">app</span><span class="o">.</span><span class="n">router</span><span class="o">.</span><span class="n">add_get</span><span class="p">(</span><span class="s1">&#39;/&#39;</span><span class="p">,</span> <span class="n">handle</span><span class="p">)</span>
+<span class="n">app</span><span class="o">.</span><span class="n">router</span><span class="o">.</span><span class="n">add_get</span><span class="p">(</span><span class="s1">&#39;/</span><span class="si">{name}</span><span class="s1">&#39;</span><span class="p">,</span> <span class="n">handle</span><span class="p">)</span>
+
+<span class="n">web</span><span class="o">.</span><span class="n">run_app</span><span class="p">(</span><span class="n">app</span><span class="p">,</span> <span class="n">port</span><span class="o">=</span><span class="mi">5858</span><span class="p">)</span>
+</code></pre></div>
+
+<p>Gunicorn will include this file as a module, and we don't want the development server to be started - but 
+it would be handy to still be able to run it from the python interpreter while developing. To achieve this,
+add the following check before the line that starts the server:</p>
+<div class="highlight"><pre><span></span><code><span class="n">app</span> <span class="o">=</span> <span class="n">web</span><span class="o">.</span><span class="n">Application</span><span class="p">()</span>
+<span class="n">app</span><span class="o">.</span><span class="n">router</span><span class="o">.</span><span class="n">add_get</span><span class="p">(</span><span class="s1">&#39;/&#39;</span><span class="p">,</span> <span class="n">handle</span><span class="p">)</span>
+<span class="n">app</span><span class="o">.</span><span class="n">router</span><span class="o">.</span><span class="n">add_get</span><span class="p">(</span><span class="s1">&#39;/</span><span class="si">{name}</span><span class="s1">&#39;</span><span class="p">,</span> <span class="n">handle</span><span class="p">)</span>
+
+<span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s1">&#39;__main__&#39;</span><span class="p">:</span>
+    <span class="n">web</span><span class="o">.</span><span class="n">run_app</span><span class="p">(</span><span class="n">app</span><span class="p">,</span> <span class="n">port</span><span class="o">=</span><span class="mi">5858</span><span class="p">)</span>
+</code></pre></div>
+
+<p>Next step is to create the configuration file for Gunicorn. Create a <code>gunicorn.conf</code> file in the same folder
+as <code>server.py</code>, and populate it with:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span> <span class="nn">multiprocessing</span>
+
+<span class="c1"># listen to port 5858 on all available network interfaces</span>
+<span class="n">bind</span> <span class="o">=</span> <span class="s2">&quot;0.0.0.0:5858&quot;</span>
+
+<span class="c1"># Run the aiohttp app in multiple processes</span>
+<span class="n">workers</span> <span class="o">=</span> <span class="n">multiprocessing</span><span class="o">.</span><span class="n">cpu_count</span><span class="p">()</span> <span class="o">*</span> <span class="mi">2</span> <span class="o">+</span> <span class="mi">1</span>
+
+<span class="c1"># Use the correct worker class for aiohttp - this will change is using a different framework</span>
+<span class="n">worker_class</span> <span class="o">=</span> <span class="s1">&#39;aiohttp.worker.GunicornWebWorker&#39;</span>
+</code></pre></div>
+
+<p>Gunicorn can now be run by calling:</p>
+<div class="highlight"><pre><span></span><code>gunicorn -c gunicorn.conf server:app
+</code></pre></div>
+
+<p><code>-c gunicorn.conf</code> will instruct Gunicorn to use the appropriate config file, while <code>server:app</code> defines
+the entry point into the aiohttp app. </p>
+<p><em>Note: At the time of writing, Gunicorn does not run on Windows systems. To run it natively you will have to
+use a Linux or Mac machine, or run it in Docker under Windows. The issue is tracked 
+<a href="https://github.com/benoitc/gunicorn/issues/524">here</a>.</em>  </p>
+<p>Once Gunicorn has started, it will report its state to the console:</p>
+<div class="highlight"><pre><span></span><code><span class="mi">2017</span><span class="o">-</span><span class="mi">04</span><span class="o">-</span><span class="mi">24</span><span class="w"> </span><span class="mi">22</span><span class="err">:</span><span class="mi">23</span><span class="err">:</span><span class="mi">03</span><span class="w"> </span><span class="o">+</span><span class="mi">0000</span><span class="err">]</span><span class="w"> </span><span class="o">[</span><span class="n">1</span><span class="o">]</span><span class="w"> </span><span class="o">[</span><span class="n">INFO</span><span class="o">]</span><span class="w"> </span><span class="n">Starting</span><span class="w"> </span><span class="n">gunicorn</span><span class="w"> </span><span class="mf">19.7.1</span><span class="w"></span>
+<span class="mi">2017</span><span class="o">-</span><span class="mi">04</span><span class="o">-</span><span class="mi">24</span><span class="w"> </span><span class="mi">22</span><span class="err">:</span><span class="mi">23</span><span class="err">:</span><span class="mi">03</span><span class="w"> </span><span class="o">+</span><span class="mi">0000</span><span class="err">]</span><span class="w"> </span><span class="o">[</span><span class="n">1</span><span class="o">]</span><span class="w"> </span><span class="o">[</span><span class="n">INFO</span><span class="o">]</span><span class="w"> </span><span class="n">Listening</span><span class="w"> </span><span class="k">at</span><span class="err">:</span><span class="w"> </span><span class="nl">http</span><span class="p">:</span><span class="o">//</span><span class="mf">0.0.0.0</span><span class="err">:</span><span class="mi">5858</span><span class="w"> </span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="w"></span>
+<span class="mi">2017</span><span class="o">-</span><span class="mi">04</span><span class="o">-</span><span class="mi">24</span><span class="w"> </span><span class="mi">22</span><span class="err">:</span><span class="mi">23</span><span class="err">:</span><span class="mi">03</span><span class="w"> </span><span class="o">+</span><span class="mi">0000</span><span class="err">]</span><span class="w"> </span><span class="o">[</span><span class="n">1</span><span class="o">]</span><span class="w"> </span><span class="o">[</span><span class="n">INFO</span><span class="o">]</span><span class="w"> </span><span class="k">Using</span><span class="w"> </span><span class="nl">worker</span><span class="p">:</span><span class="w"> </span><span class="n">aiohttp</span><span class="p">.</span><span class="n">worker</span><span class="p">.</span><span class="n">GunicornWebWorker</span><span class="w"></span>
+<span class="mi">2017</span><span class="o">-</span><span class="mi">04</span><span class="o">-</span><span class="mi">24</span><span class="w"> </span><span class="mi">22</span><span class="err">:</span><span class="mi">23</span><span class="err">:</span><span class="mi">03</span><span class="w"> </span><span class="o">+</span><span class="mi">0000</span><span class="err">]</span><span class="w"> </span><span class="o">[</span><span class="n">8</span><span class="o">]</span><span class="w"> </span><span class="o">[</span><span class="n">INFO</span><span class="o">]</span><span class="w"> </span><span class="n">Booting</span><span class="w"> </span><span class="n">worker</span><span class="w"> </span><span class="k">with</span><span class="w"> </span><span class="nl">pid</span><span class="p">:</span><span class="w"> </span><span class="mi">8</span><span class="w"></span>
+<span class="mi">2017</span><span class="o">-</span><span class="mi">04</span><span class="o">-</span><span class="mi">24</span><span class="w"> </span><span class="mi">22</span><span class="err">:</span><span class="mi">23</span><span class="err">:</span><span class="mi">03</span><span class="w"> </span><span class="o">+</span><span class="mi">0000</span><span class="err">]</span><span class="w"> </span><span class="o">[</span><span class="n">9</span><span class="o">]</span><span class="w"> </span><span class="o">[</span><span class="n">INFO</span><span class="o">]</span><span class="w"> </span><span class="n">Booting</span><span class="w"> </span><span class="n">worker</span><span class="w"> </span><span class="k">with</span><span class="w"> </span><span class="nl">pid</span><span class="p">:</span><span class="w"> </span><span class="mi">9</span><span class="w"></span>
+<span class="mi">2017</span><span class="o">-</span><span class="mi">04</span><span class="o">-</span><span class="mi">24</span><span class="w"> </span><span class="mi">22</span><span class="err">:</span><span class="mi">23</span><span class="err">:</span><span class="mi">03</span><span class="w"> </span><span class="o">+</span><span class="mi">0000</span><span class="err">]</span><span class="w"> </span><span class="o">[</span><span class="n">10</span><span class="o">]</span><span class="w"> </span><span class="o">[</span><span class="n">INFO</span><span class="o">]</span><span class="w"> </span><span class="n">Booting</span><span class="w"> </span><span class="n">worker</span><span class="w"> </span><span class="k">with</span><span class="w"> </span><span class="nl">pid</span><span class="p">:</span><span class="w"> </span><span class="mi">10</span><span class="w"></span>
+<span class="mi">2017</span><span class="o">-</span><span class="mi">04</span><span class="o">-</span><span class="mi">24</span><span class="w"> </span><span class="mi">22</span><span class="err">:</span><span class="mi">23</span><span class="err">:</span><span class="mi">03</span><span class="w"> </span><span class="o">+</span><span class="mi">0000</span><span class="err">]</span><span class="w"> </span><span class="o">[</span><span class="n">11</span><span class="o">]</span><span class="w"> </span><span class="o">[</span><span class="n">INFO</span><span class="o">]</span><span class="w"> </span><span class="n">Booting</span><span class="w"> </span><span class="n">worker</span><span class="w"> </span><span class="k">with</span><span class="w"> </span><span class="nl">pid</span><span class="p">:</span><span class="w"> </span><span class="mi">11</span><span class="w"></span>
+<span class="mi">2017</span><span class="o">-</span><span class="mi">04</span><span class="o">-</span><span class="mi">24</span><span class="w"> </span><span class="mi">22</span><span class="err">:</span><span class="mi">23</span><span class="err">:</span><span class="mi">03</span><span class="w"> </span><span class="o">+</span><span class="mi">0000</span><span class="err">]</span><span class="w"> </span><span class="o">[</span><span class="n">13</span><span class="o">]</span><span class="w"> </span><span class="o">[</span><span class="n">INFO</span><span class="o">]</span><span class="w"> </span><span class="n">Booting</span><span class="w"> </span><span class="n">worker</span><span class="w"> </span><span class="k">with</span><span class="w"> </span><span class="nl">pid</span><span class="p">:</span><span class="w"> </span><span class="mi">13</span><span class="w"></span>
+</code></pre></div>
+
+<p>After seeing this, you can now hit the service with your browser at http://127.0.0.1:5858. </p>
+<h2>Running Gunicorn in Docker</h2>
+<p>To run Gunicorn in Docker, we'll have to modify our existing <code>Dockerfile</code> to:</p>
+<ul>
+<li>include the gunicorn.conf file in the Docker image</li>
+<li>install Gunicorn</li>
+<li>run the service using Gunicorn rather than the Python interpreter</li>
+</ul>
+<p>To copy the configuration file, add a <code>COPY</code> instruction after the <code>COPY</code> instructions already in the file:</p>
+<div class="highlight"><pre><span></span><code>COPY gunicorn.conf /
+</code></pre></div>
+
+<p>Next, add a command that will install the <code>gunicorn</code> dependency in the image:</p>
+<div class="highlight"><pre><span></span><code>RUN pip install gunicorn
+</code></pre></div>
+
+<p>Alternatively, we could have added <code>gunicorn</code> to the <code>requirements.txt</code> file, and thus have it installed
+when <code>pip install -r requirements.txt</code> is run. However, the project does not require Gunicorn to run with the 
+aiohttp's development server, so I've opted to exclude the dependency from <code>requirements.txt</code>. </p>
+<p>Next, replace the existing <code>CMD</code> command with a call to start the Gunicorn server:</p>
+<div class="highlight"><pre><span></span><code>CMD [&quot;gunicorn&quot;, &quot;-c&quot;, &quot;gunicorn.conf&quot;, &quot;server:app&quot;]
+</code></pre></div>
+
+<p>Your <code>Dockerfile</code> should now look like this:</p>
+<div class="highlight"><pre><span></span><code>FROM python:3
+COPY server.py /
+COPY gunicorn.conf /
+COPY requirements.txt /
+COPY opentsdb_tagcounter_reporter.py /
+COPY tagged_counter.py /
+RUN pip install -r requirements.txt
+CMD [ &quot;gunicorn&quot;, &quot;-c&quot;, &quot;gunicorn.conf&quot;, &quot;server:app&quot; ]
+</code></pre></div>
+
+<p>You can now build and run the Docker image:</p>
+<div class="highlight"><pre><span></span><code>docker build -t docker-aiohttp-gunicorn .
+docker run -p 5858:5858 docker-aiohttp-gunicorn
+</code></pre></div>
+
+<p>You can now verify the image has been built successfully and server is running as expected
+by navigating to http://127.0.0.1:5858 .</p>
+<p>This Docker image can now be easily shared (e.g. by uploading it to <a href="https://hub.docker.com/">Docker Hub</a>) 
+and run on various platforms, such as <a href="https://aws.amazon.com/ecs/getting-started/">Amazon's EC2 Container Services</a>.  </p>
+<p><em>The source files can be found on <a href="https://github.com/RendijsSmukulis/docker-aiohttp-gunicorn">github</a>.</em></p>
+			</div>
+		</article>
+	</section>
+</section>
+
+    </div>
+
+    
+	<!-- Footer -->
+	<footer id="footer">
+		<div class="inner">
+			<ul class="icons">
+				<li><a href="." class="icon fa-home"><span class="label">Home</span></a></li>
+				<li><a href="https://www.linkedin.com/in/rendijs-smukulis/" class="icon fa-linkedin"><span class="label">Twitter</span></a></li>
+				<li><a href="https://github.com/RendijsSmukulis" class="icon fa-github"><span class="label">Github</span></a></li>
+				<li><a href="http://codevoid.io/feeds/all.atom.xml" class="icon fa-rss"><span class="label">RSS Feed</span></a></li>
+			</ul>
+			<ul class="copyright">
+				<li>&copy; Rendijs/Randy Smukulis</li>
+			</ul>
+		</div>
+	</footer>
+
+	<!-- Scripts -->
+	<script src="theme/js/jquery.min.js"></script>
+	<script src="theme/js/jquery.poptrox.min.js"></script>
+	<script src="theme/js/skel.min.js"></script>
+	<script src="theme/js/util.js"></script>
+	<!--[if lte IE 8]><script src="theme/js/ie/respond.min.js"></script><![endif]-->
+	<script src="theme/js/main.js"></script>
+
+</body>
+
+</html>

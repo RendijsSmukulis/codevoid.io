@@ -1,0 +1,180 @@
+<!DOCTYPE HTML>
+<!--
+	Strata by HTML5 UP
+	html5up.net | @ajlkn
+	Free for personal and commercial use under the CCA 3.0 license (html5up.net/license)
+-->
+<html>
+	<head>
+		<title>Serverless Reddit Crawling With Python And AWS Lambdas</title>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<!--[if lte IE 8]><script src="theme/js/ie/html5shiv.js"></script><![endif]-->
+		<link rel="stylesheet" href="theme/css/main.css" />		
+        <link rel="stylesheet" href="theme/css/pygment.css" />		
+        
+        <link href="http://codevoid.io/feeds/all.atom.xml" type="application/atom+xml" rel="alternate" title="Code Void Atom Feed" />
+
+
+		<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"/>
+		<link rel="icon" type="image/png" href="/favicon-32x32.png" sizes="32x32"/>
+		<link rel="icon" type="image/png" href="/favicon-16x16.png" sizes="16x16"/>
+		<link rel="manifest" href="/manifest.json"/>
+		<link rel="mask-icon" href="/safari-pinned-tab.svg" color="#5bbad5"/>
+		<meta name="theme-color" content="#ffffff"/>
+		<script>
+			(function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+			(i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+			m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+			})(window,document,'script','https://www.google-analytics.com/analytics.js','ga');
+			ga('create', 'UA-96943773-1', 'auto');
+			ga('send', 'pageview');
+		</script>
+		<!--[if lte IE 8]><link rel="stylesheet" href="theme/css/ie8.css" /><![endif]-->
+        <!--[if IE]>
+            <script src="http://html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+        <![endif]-->
+	</head>
+
+    <body id="top">
+
+		<!-- Header -->
+			<header id="header">
+				<div class="inner">
+					<a href="#" class="image avatar"><img src="theme/images/avatar.jpg" alt="" /></a>
+					<h1><strong>Code Void</strong> blog,<br />
+					programming and ramblings<br />
+					by <a href="..">Rendijs Smukulis</a></h1>
+				</div>
+			</header>
+
+            
+	<!-- Main -->
+	<div id="main">
+
+    <!-- index...-->
+<section id="one">
+	<section id="content" class="body">
+		<article>
+					<header class="major">
+				<h2 class="blog-post-title archive-header"><a href="../drafts/serverless-reddit-crawling-with-python-and-aws-lambdas.html" rel="bookmark"
+						title="Permalink to Serverless Reddit Crawling With Python And AWS Lambdas">Serverless Reddit Crawling With Python And AWS Lambdas</a></h2>
+			</header>
+				
+			<div class="post-preview"><footer class="post-info">
+        <span id="article-date-span"><em>Sat 13 May 2017</em></span>
+</footer><!-- /.post-info --><p>Amazon recently announced Python 3.6 support for AWS Lambda, so this is a good
+time to explore what we can build with this. I decided to use a few different Lambdas to create a data pipeline that 
+can be used for crawling top posts from a given Reddit subreddit, and store any linked
+images into S3 as a demonstration. Because how better to explore new tech than by
+downloading hundreds of cat pictures from Reddit? Even better if we can do this in an
+entirely serverless manner.</p>
+<p>Pic here: 
+1. AWS Lambda
+2. ???
+3. Profit + cat pictures</p>
+<p>Lambdas are serverless, event-driven elements of the AWS platform, which means you do
+not have to worry about where to host the code, and how to scale it out. You can think of them 
+as cloud-hosted functions that will be called by AWS infrastructure to respond to some 
+event, e.g. an HTTP call, SNS notification, or a timed event.</p>
+<p>This article will demonstrate how to use Lambdas to:</p>
+<ul>
+<li>Handle an HTTP request</li>
+<li>Process an SNS event</li>
+<li>Run on a schedule</li>
+<li>Chain Lambdas to process SQS messages</li>
+</ul>
+<p>The completed pipeline will accept an HTTP request, triggering the crawl of the specified subreddit. 
+This will load the top 100 posts from said subreddit (e.g. XXXXXXX), and then persist all pictures
+linked by each of the posts in S3.</p>
+<p>The finished pipeline works as follows:
+<img alt="Reddit Crawler Serverless Pipeline" src="../images/reddit-scrape-aws-pipeline-small.png"></p>
+<ol>
+<li>User POSTs a request to an HTTP endpoint requesting a certain subreddit to be crawled, e.g. /r/aww</li>
+<li>This request is handled by the first Lambda, titled 'HTTP API Endpoint' in the blueprint. The Lambda will create a new SNS notification, and return a '201 Created' to the user.</li>
+<li>The SNS event triggers the 'Subreddit Article Loader' Lambda, which will look up the top 100 posts in the given subreddit. It will then enqueue an SQS message for each post. </li>
+<li>A Scheduled Lambda ('Article Download Balancer') will periodically check for new work in the SQS queue. When new messages arrive, it will invoke Download Worker Lambdas, handing out one piece of work (i.e a reddit post to process) to ech worker. </li>
+<li>Each Worker Lambda will download the pictures linked by the reddit post they were invoked to process, and persist
+the files to S3. </li>
+</ol>
+<h2>Create the <em>HTTP API Endpoint</em> Lambda and the SNS topic</h2>
+<p>h3: what is SNS and why are we using it? 
+- event driven, triggers lambdas
+- good for decoupling lambdas
+- lambdas can retry </p>
+<p>api gatweay:
+- steps 1 and 2 from the api gateway guide http://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-create-resource-and-methods.html or http://www.giantflyingsaucer.com/blog/?p=5730</p>
+<p>lambda: 
+- pip install boto3 &lt;-- do we need to do this, or do the EC2s come with some libraries installed?
+- gets the url from the request
+- logs
+- adds to SNS
+- returns 201 Created</p>
+<h2>Deploy and test the Lambda</h2>
+<ol>
+<li>create the SQS queue</li>
+<li>create a policy to write to sqs</li>
+<li>Deploy lambda using UI</li>
+<li>create API gateway </li>
+<li>Hit the lambda with curl (but mention Insomnia)</li>
+<li>Hit the lambda, get 201 back {"subreddit":"aww","sort_method":"top"}</li>
+<li>Show the logs</li>
+<li>Show the event in Sqs, mention this will consume the event</li>
+</ol>
+<h2>Create the <em>Subreddit Article Loader</em> Lambda</h2>
+<p>The article loader is throttled to 1 request every 2 seconds.
+It only loads up to first 100 items, and makes only 1 call to reddit api. 
+Implementation could be changed to load more, but to avoid exceeding the rate each message in sqs should represent 1 reddit request.</p>
+<p>http://docs.aws.amazon.com/lambda/latest/dg/lambda-python-how-to-create-deployment-package.html to install PRAW ?
+available modules: https://gist.github.com/gene1wood/4a052f39490fae00e0c3</p>
+<ol>
+<li>create SNS topic</li>
+<li>create policy to read from and delete from sqs and write to sns, and create a lambda role </li>
+<li>Link to getting a key for reddit dev access</li>
+<li>pip install praw</li>
+<li>Creating a Deployment Package</li>
+<li>get the link out of SNS event &amp; log</li>
+<li>PRAW get top links, log, filter out anything that's not imgur or reddit images</li>
+<li>
+<p>send each link to sqs</p>
+</li>
+<li>
+<p>Why SNS not SQS???</p>
+</li>
+</ol>
+<p>..last(ish):
+Create CloudFormation to deploy the whole stack</p>
+			</div>
+		</article>
+	</section>
+</section>
+
+    </div>
+
+    
+	<!-- Footer -->
+	<footer id="footer">
+		<div class="inner">
+			<ul class="icons">
+				<li><a href=".." class="icon fa-home"><span class="label">Home</span></a></li>
+				<li><a href="https://www.linkedin.com/in/rendijs-smukulis/" class="icon fa-linkedin"><span class="label">Twitter</span></a></li>
+				<li><a href="https://github.com/RendijsSmukulis" class="icon fa-github"><span class="label">Github</span></a></li>
+				<li><a href="http://codevoid.io/feeds/all.atom.xml" class="icon fa-rss"><span class="label">RSS Feed</span></a></li>
+			</ul>
+			<ul class="copyright">
+				<li>&copy; Rendijs/Randy Smukulis</li>
+			</ul>
+		</div>
+	</footer>
+
+	<!-- Scripts -->
+	<script src="theme/js/jquery.min.js"></script>
+	<script src="theme/js/jquery.poptrox.min.js"></script>
+	<script src="theme/js/skel.min.js"></script>
+	<script src="theme/js/util.js"></script>
+	<!--[if lte IE 8]><script src="theme/js/ie/respond.min.js"></script><![endif]-->
+	<script src="theme/js/main.js"></script>
+
+</body>
+
+</html>

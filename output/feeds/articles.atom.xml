@@ -1,0 +1,625 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom"><title>Code Void - Articles</title><link href="http://codevoid.io/" rel="alternate"></link><link href="http://codevoid.io/feeds/articles.atom.xml" rel="self"></link><id>http://codevoid.io/</id><updated>2021-04-11T10:20:00+01:00</updated><entry><title>Optimizing SQLCipher performance with C# and Entity Framework Core</title><link href="http://codevoid.io/optimizing-sqlcipher-performance-with-c-and-entity-framework-core.html" rel="alternate"></link><published>2021-04-11T10:20:00+01:00</published><updated>2021-04-11T10:20:00+01:00</updated><author><name>Rendijs Smukulis</name></author><id>tag:codevoid.io,2021-04-11:/optimizing-sqlcipher-performance-with-c-and-entity-framework-core.html</id><summary type="html">&lt;p&gt;Recently, I've had to implement a secure storage service in a .NET5 C# application, and ended up selecting SQLCipher as the encrypted store for the data. &lt;/p&gt;
+&lt;p&gt;During the work, I found a lot of misleading advice online which boils down to "SQLCipher with Entity Framework is too slow to be …&lt;/p&gt;</summary><content type="html">&lt;p&gt;Recently, I've had to implement a secure storage service in a .NET5 C# application, and ended up selecting SQLCipher as the encrypted store for the data. &lt;/p&gt;
+&lt;p&gt;During the work, I found a lot of misleading advice online which boils down to "SQLCipher with Entity Framework is too slow to be useable", so this blog post is here to alleviate these claims. 
+This blog post will be a high-level walk-through on how I tuned its performance under Entity Framework Core from "unuseable" to "this will work well for us".&lt;/p&gt;
+&lt;p&gt;So what's SQLCipher, and why would you use it? One can think of SQLCipher as "SQLite, but with encryption". Their pitch is "Open-source extension to SQLite; Transparent, 256-bit AES encryption". Since using Entity Framework Core with SQLite is a fairly standard practice for local storage in apps, this seemed like an easy choice to make.&lt;/p&gt;
+&lt;h2&gt;Naive Implementation&lt;/h2&gt;
+&lt;p&gt;Setting up a project to try the SQLCipher/EF Core combination was straight-forward:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Set up EF Core with SQLite as described &lt;a href="https://docs.microsoft.com/en-us/ef/core/get-started/overview/first-app?tabs=netcore-cli"&gt;here&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;then replace SQLite with SQLCipher as described &lt;a href="https://docs.microsoft.com/en-us/dotnet/standard/data/sqlite/encryption?tabs=netcore-cli"&gt;here&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Let's modify the &lt;code&gt;OnConfiguring&lt;/code&gt; method to include the password in the connection string, and give it a quick performance test.&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;        &lt;span class="n"&gt;protected&lt;/span&gt; &lt;span class="n"&gt;override&lt;/span&gt; &lt;span class="n"&gt;void&lt;/span&gt; &lt;span class="n"&gt;OnConfiguring&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;DbContextOptionsBuilder&lt;/span&gt; &lt;span class="n"&gt;options&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="p"&gt;{&lt;/span&gt;
+            &lt;span class="k"&gt;var&lt;/span&gt; &lt;span class="n"&gt;connString&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;new&lt;/span&gt; &lt;span class="n"&gt;SqliteConnectionStringBuilder&lt;/span&gt;
+            &lt;span class="p"&gt;{&lt;/span&gt;
+                &lt;span class="n"&gt;DataSource&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="s2"&gt;&amp;quot;blogging.db&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+                &lt;span class="n"&gt;Password&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="s2"&gt;&amp;quot;password1&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+            &lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;ToString&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;
+
+            &lt;span class="n"&gt;options&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;UseSqlite&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;connString&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
+        &lt;span class="p"&gt;}&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;To keep this article somewhat short, I'll be looking at two metrics: &lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Time to write a new object to the DB &lt;em&gt;without&lt;/em&gt; a pre-existing DB connection - further called a "first write"&lt;/li&gt;
+&lt;li&gt;and time to write a new object to the DB &lt;em&gt;with&lt;/em&gt; a pre-existing DB connection - further called a "subsequent write".&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;So let's do a quick write-performance check:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;                    &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;var&lt;/span&gt; &lt;span class="n"&gt;j&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt; &lt;span class="n"&gt;j&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;&lt;/span&gt; &lt;span class="n"&gt;innerIterations&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt; &lt;span class="n"&gt;j&lt;/span&gt;&lt;span class="o"&gt;++&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+                    &lt;span class="p"&gt;{&lt;/span&gt;
+                        &lt;span class="n"&gt;using&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;var&lt;/span&gt; &lt;span class="n"&gt;db&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;new&lt;/span&gt; &lt;span class="n"&gt;BloggingContext&lt;/span&gt;&lt;span class="p"&gt;())&lt;/span&gt;
+                        &lt;span class="p"&gt;{&lt;/span&gt;
+                            &lt;span class="k"&gt;var&lt;/span&gt; &lt;span class="n"&gt;blog&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;new&lt;/span&gt; &lt;span class="n"&gt;Blog&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt; &lt;span class="n"&gt;Url&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="s2"&gt;&amp;quot;http://some.blog.com/post&amp;quot;&lt;/span&gt; &lt;span class="p"&gt;};&lt;/span&gt;
+                            &lt;span class="k"&gt;var&lt;/span&gt; &lt;span class="n"&gt;sw&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;Stopwatch&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;StartNew&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;
+                            &lt;span class="n"&gt;db&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Blogs&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Add&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;blog&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
+                            &lt;span class="n"&gt;db&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;SaveChanges&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;
+                            &lt;span class="n"&gt;sw&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Stop&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;
+                        &lt;span class="p"&gt;}&lt;/span&gt;
+                    &lt;span class="p"&gt;}&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;Note that for simplicity some code has not been included in the listings, e.g. the code to warm-up the app and DB before first performance runs.&lt;/p&gt;
+&lt;p&gt;&lt;img alt="" src="http://codevoid.io/images/2021-04-11-09-59-46.png"&gt;&lt;/p&gt;
+&lt;p&gt;I can see where the complaints about performance come from. 600ms to write a simple object to the database? Users will definitely notice the delay. To be fair, this is our worst-case-on-purpose attempt. We're not reusing the DBContext between calls, so let's fix that first.&lt;/p&gt;
+&lt;p&gt;Let's modify the loop to reuse the DBContext:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;                    &lt;span class="n"&gt;using&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;var&lt;/span&gt; &lt;span class="n"&gt;db&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;new&lt;/span&gt; &lt;span class="n"&gt;BloggingContext&lt;/span&gt;&lt;span class="p"&gt;())&lt;/span&gt;
+                    &lt;span class="p"&gt;{&lt;/span&gt;
+                        &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;var&lt;/span&gt; &lt;span class="n"&gt;j&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt; &lt;span class="n"&gt;j&lt;/span&gt; &lt;span class="o"&gt;&amp;lt;&lt;/span&gt; &lt;span class="n"&gt;innerIterations&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt; &lt;span class="n"&gt;j&lt;/span&gt;&lt;span class="o"&gt;++&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+                        &lt;span class="p"&gt;{&lt;/span&gt;
+                            &lt;span class="k"&gt;var&lt;/span&gt; &lt;span class="n"&gt;blog&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;new&lt;/span&gt; &lt;span class="n"&gt;Blog&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt; &lt;span class="n"&gt;Url&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="s2"&gt;&amp;quot;http://some.blog.com/post&amp;quot;&lt;/span&gt; &lt;span class="p"&gt;};&lt;/span&gt;
+                            &lt;span class="k"&gt;var&lt;/span&gt; &lt;span class="n"&gt;sw&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;Stopwatch&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;StartNew&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;
+                            &lt;span class="n"&gt;db&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Blogs&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Add&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;blog&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
+                            &lt;span class="n"&gt;db&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;SaveChanges&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;
+                            &lt;span class="n"&gt;sw&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Stop&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;
+                        &lt;span class="p"&gt;}&lt;/span&gt;
+                    &lt;span class="p"&gt;}&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;&lt;img alt="" src="http://codevoid.io/images/2021-04-11-10-03-15.png"&gt;&lt;/p&gt;
+&lt;p&gt;I would have expected to see an improvement in the "subsequent writes", but that's not the case. Time to figure out what's happening behind the scenes.&lt;/p&gt;
+&lt;h2&gt;Step 1: We need to know what's happening&lt;/h2&gt;
+&lt;p&gt;Without seeing what queries EF Core is firing at SQLCipher (and their timings), we're flying blind. First step is to enable debugging in EF Core.&lt;/p&gt;
+&lt;p&gt;Replace &lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;            options.UseSqlite(c);
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;with&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;            options.
+                LogTo(c =&amp;gt; Debug.WriteLine(c)).
+                EnableSensitiveDataLogging().
+                UseSqlite(c);
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;Now our debug spew shows us in good detail:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;what EF Core is doing,&lt;/li&gt;
+&lt;li&gt;what queries are fired at SQLCipher, &lt;/li&gt;
+&lt;li&gt;how much time each query takes.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="n"&gt;dbug&lt;/span&gt;&lt;span class="o"&gt;:&lt;/span&gt; &lt;span class="mi"&gt;4&lt;/span&gt;&lt;span class="sr"&gt;/11/&lt;/span&gt;&lt;span class="mi"&gt;2021&lt;/span&gt; &lt;span class="mi"&gt;10&lt;/span&gt;&lt;span class="o"&gt;:&lt;/span&gt;&lt;span class="mi"&gt;29&lt;/span&gt;&lt;span class="o"&gt;:&lt;/span&gt;&lt;span class="mf"&gt;50.853&lt;/span&gt; &lt;span class="n"&gt;RelationalEventId&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;ConnectionOpening&lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;20000&lt;/span&gt;&lt;span class="o"&gt;]&lt;/span&gt; &lt;span class="o"&gt;(&lt;/span&gt;&lt;span class="n"&gt;Microsoft&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;EntityFrameworkCore&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;Database&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;Connection&lt;/span&gt;&lt;span class="o"&gt;)&lt;/span&gt; 
+      &lt;span class="n"&gt;Opening&lt;/span&gt; &lt;span class="n"&gt;connection&lt;/span&gt; &lt;span class="n"&gt;to&lt;/span&gt; &lt;span class="n"&gt;database&lt;/span&gt; &lt;span class="s1"&gt;&amp;#39;main&amp;#39;&lt;/span&gt; &lt;span class="n"&gt;on&lt;/span&gt; &lt;span class="n"&gt;server&lt;/span&gt; &lt;span class="s1"&gt;&amp;#39;blogging.db&amp;#39;&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;
+&lt;span class="n"&gt;dbug&lt;/span&gt;&lt;span class="o"&gt;:&lt;/span&gt; &lt;span class="mi"&gt;4&lt;/span&gt;&lt;span class="sr"&gt;/11/&lt;/span&gt;&lt;span class="mi"&gt;2021&lt;/span&gt; &lt;span class="mi"&gt;10&lt;/span&gt;&lt;span class="o"&gt;:&lt;/span&gt;&lt;span class="mi"&gt;29&lt;/span&gt;&lt;span class="o"&gt;:&lt;/span&gt;&lt;span class="mf"&gt;51.439&lt;/span&gt; &lt;span class="n"&gt;RelationalEventId&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;ConnectionOpened&lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;20001&lt;/span&gt;&lt;span class="o"&gt;]&lt;/span&gt; &lt;span class="o"&gt;(&lt;/span&gt;&lt;span class="n"&gt;Microsoft&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;EntityFrameworkCore&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;Database&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;Connection&lt;/span&gt;&lt;span class="o"&gt;)&lt;/span&gt; 
+      &lt;span class="n"&gt;Opened&lt;/span&gt; &lt;span class="n"&gt;connection&lt;/span&gt; &lt;span class="n"&gt;to&lt;/span&gt; &lt;span class="n"&gt;database&lt;/span&gt; &lt;span class="s1"&gt;&amp;#39;main&amp;#39;&lt;/span&gt; &lt;span class="n"&gt;on&lt;/span&gt; &lt;span class="n"&gt;server&lt;/span&gt; &lt;span class="s1"&gt;&amp;#39;blogging.db&amp;#39;&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;
+&lt;span class="n"&gt;dbug&lt;/span&gt;&lt;span class="o"&gt;:&lt;/span&gt; &lt;span class="mi"&gt;4&lt;/span&gt;&lt;span class="sr"&gt;/11/&lt;/span&gt;&lt;span class="mi"&gt;2021&lt;/span&gt; &lt;span class="mi"&gt;10&lt;/span&gt;&lt;span class="o"&gt;:&lt;/span&gt;&lt;span class="mi"&gt;29&lt;/span&gt;&lt;span class="o"&gt;:&lt;/span&gt;&lt;span class="mf"&gt;51.443&lt;/span&gt; &lt;span class="n"&gt;RelationalEventId&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;TransactionStarting&lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;20209&lt;/span&gt;&lt;span class="o"&gt;]&lt;/span&gt; &lt;span class="o"&gt;(&lt;/span&gt;&lt;span class="n"&gt;Microsoft&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;EntityFrameworkCore&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;Database&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;Transaction&lt;/span&gt;&lt;span class="o"&gt;)&lt;/span&gt; 
+      &lt;span class="n"&gt;Beginning&lt;/span&gt; &lt;span class="n"&gt;transaction&lt;/span&gt; &lt;span class="k"&gt;with&lt;/span&gt; &lt;span class="n"&gt;isolation&lt;/span&gt; &lt;span class="n"&gt;level&lt;/span&gt; &lt;span class="s1"&gt;&amp;#39;Unspecified&amp;#39;&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;
+&lt;span class="o"&gt;...&lt;/span&gt;
+&lt;span class="n"&gt;dbug&lt;/span&gt;&lt;span class="o"&gt;:&lt;/span&gt; &lt;span class="mi"&gt;4&lt;/span&gt;&lt;span class="sr"&gt;/11/&lt;/span&gt;&lt;span class="mi"&gt;2021&lt;/span&gt; &lt;span class="mi"&gt;10&lt;/span&gt;&lt;span class="o"&gt;:&lt;/span&gt;&lt;span class="mi"&gt;29&lt;/span&gt;&lt;span class="o"&gt;:&lt;/span&gt;&lt;span class="mf"&gt;51.568&lt;/span&gt; &lt;span class="n"&gt;RelationalEventId&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;TransactionCommitted&lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;20202&lt;/span&gt;&lt;span class="o"&gt;]&lt;/span&gt; &lt;span class="o"&gt;(&lt;/span&gt;&lt;span class="n"&gt;Microsoft&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;EntityFrameworkCore&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;Database&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;Transaction&lt;/span&gt;&lt;span class="o"&gt;)&lt;/span&gt; 
+      &lt;span class="n"&gt;Committed&lt;/span&gt; &lt;span class="n"&gt;transaction&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;
+&lt;span class="n"&gt;dbug&lt;/span&gt;&lt;span class="o"&gt;:&lt;/span&gt; &lt;span class="mi"&gt;4&lt;/span&gt;&lt;span class="sr"&gt;/11/&lt;/span&gt;&lt;span class="mi"&gt;2021&lt;/span&gt; &lt;span class="mi"&gt;10&lt;/span&gt;&lt;span class="o"&gt;:&lt;/span&gt;&lt;span class="mi"&gt;29&lt;/span&gt;&lt;span class="o"&gt;:&lt;/span&gt;&lt;span class="mf"&gt;51.571&lt;/span&gt; &lt;span class="n"&gt;RelationalEventId&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;ConnectionClosing&lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;20002&lt;/span&gt;&lt;span class="o"&gt;]&lt;/span&gt; &lt;span class="o"&gt;(&lt;/span&gt;&lt;span class="n"&gt;Microsoft&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;EntityFrameworkCore&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;Database&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;Connection&lt;/span&gt;&lt;span class="o"&gt;)&lt;/span&gt; 
+      &lt;span class="n"&gt;Closing&lt;/span&gt; &lt;span class="n"&gt;connection&lt;/span&gt; &lt;span class="n"&gt;to&lt;/span&gt; &lt;span class="n"&gt;database&lt;/span&gt; &lt;span class="s1"&gt;&amp;#39;main&amp;#39;&lt;/span&gt; &lt;span class="n"&gt;on&lt;/span&gt; &lt;span class="n"&gt;server&lt;/span&gt; &lt;span class="s1"&gt;&amp;#39;blogging.db&amp;#39;&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;
+&lt;span class="n"&gt;dbug&lt;/span&gt;&lt;span class="o"&gt;:&lt;/span&gt; &lt;span class="mi"&gt;4&lt;/span&gt;&lt;span class="sr"&gt;/11/&lt;/span&gt;&lt;span class="mi"&gt;2021&lt;/span&gt; &lt;span class="mi"&gt;10&lt;/span&gt;&lt;span class="o"&gt;:&lt;/span&gt;&lt;span class="mi"&gt;29&lt;/span&gt;&lt;span class="o"&gt;:&lt;/span&gt;&lt;span class="mf"&gt;51.585&lt;/span&gt; &lt;span class="n"&gt;RelationalEventId&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;ConnectionClosed&lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;20003&lt;/span&gt;&lt;span class="o"&gt;]&lt;/span&gt; &lt;span class="o"&gt;(&lt;/span&gt;&lt;span class="n"&gt;Microsoft&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;EntityFrameworkCore&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;Database&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;Connection&lt;/span&gt;&lt;span class="o"&gt;)&lt;/span&gt; 
+      &lt;span class="n"&gt;Closed&lt;/span&gt; &lt;span class="n"&gt;connection&lt;/span&gt; &lt;span class="n"&gt;to&lt;/span&gt; &lt;span class="n"&gt;database&lt;/span&gt; &lt;span class="s1"&gt;&amp;#39;main&amp;#39;&lt;/span&gt; &lt;span class="n"&gt;on&lt;/span&gt; &lt;span class="n"&gt;server&lt;/span&gt; &lt;span class="s1"&gt;&amp;#39;blogging.db&amp;#39;&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;
+&lt;span class="n"&gt;dbug&lt;/span&gt;&lt;span class="o"&gt;:&lt;/span&gt; &lt;span class="mi"&gt;4&lt;/span&gt;&lt;span class="sr"&gt;/11/&lt;/span&gt;&lt;span class="mi"&gt;2021&lt;/span&gt; &lt;span class="mi"&gt;10&lt;/span&gt;&lt;span class="o"&gt;:&lt;/span&gt;&lt;span class="mi"&gt;29&lt;/span&gt;&lt;span class="o"&gt;:&lt;/span&gt;&lt;span class="mf"&gt;51.587&lt;/span&gt; &lt;span class="n"&gt;RelationalEventId&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;TransactionDisposed&lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;20204&lt;/span&gt;&lt;span class="o"&gt;]&lt;/span&gt; &lt;span class="o"&gt;(&lt;/span&gt;&lt;span class="n"&gt;Microsoft&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;EntityFrameworkCore&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;Database&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;Transaction&lt;/span&gt;&lt;span class="o"&gt;)&lt;/span&gt; 
+      &lt;span class="n"&gt;Disposing&lt;/span&gt; &lt;span class="n"&gt;transaction&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;
+&lt;span class="o"&gt;...&lt;/span&gt;
+&lt;span class="n"&gt;dbug&lt;/span&gt;&lt;span class="o"&gt;:&lt;/span&gt; &lt;span class="mi"&gt;4&lt;/span&gt;&lt;span class="sr"&gt;/11/&lt;/span&gt;&lt;span class="mi"&gt;2021&lt;/span&gt; &lt;span class="mi"&gt;10&lt;/span&gt;&lt;span class="o"&gt;:&lt;/span&gt;&lt;span class="mi"&gt;29&lt;/span&gt;&lt;span class="o"&gt;:&lt;/span&gt;&lt;span class="mf"&gt;51.635&lt;/span&gt; &lt;span class="n"&gt;RelationalEventId&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;ConnectionOpening&lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;20000&lt;/span&gt;&lt;span class="o"&gt;]&lt;/span&gt; &lt;span class="o"&gt;(&lt;/span&gt;&lt;span class="n"&gt;Microsoft&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;EntityFrameworkCore&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;Database&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;Connection&lt;/span&gt;&lt;span class="o"&gt;)&lt;/span&gt; 
+      &lt;span class="n"&gt;Opening&lt;/span&gt; &lt;span class="n"&gt;connection&lt;/span&gt; &lt;span class="n"&gt;to&lt;/span&gt; &lt;span class="n"&gt;database&lt;/span&gt; &lt;span class="s1"&gt;&amp;#39;main&amp;#39;&lt;/span&gt; &lt;span class="n"&gt;on&lt;/span&gt; &lt;span class="n"&gt;server&lt;/span&gt; &lt;span class="s1"&gt;&amp;#39;blogging.db&amp;#39;&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;
+&lt;span class="n"&gt;dbug&lt;/span&gt;&lt;span class="o"&gt;:&lt;/span&gt; &lt;span class="mi"&gt;4&lt;/span&gt;&lt;span class="sr"&gt;/11/&lt;/span&gt;&lt;span class="mi"&gt;2021&lt;/span&gt; &lt;span class="mi"&gt;10&lt;/span&gt;&lt;span class="o"&gt;:&lt;/span&gt;&lt;span class="mi"&gt;29&lt;/span&gt;&lt;span class="o"&gt;:&lt;/span&gt;&lt;span class="mf"&gt;52.197&lt;/span&gt; &lt;span class="n"&gt;RelationalEventId&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;ConnectionOpened&lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;20001&lt;/span&gt;&lt;span class="o"&gt;]&lt;/span&gt; &lt;span class="o"&gt;(&lt;/span&gt;&lt;span class="n"&gt;Microsoft&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;EntityFrameworkCore&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;Database&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;Connection&lt;/span&gt;&lt;span class="o"&gt;)&lt;/span&gt; 
+      &lt;span class="n"&gt;Opened&lt;/span&gt; &lt;span class="n"&gt;connection&lt;/span&gt; &lt;span class="n"&gt;to&lt;/span&gt; &lt;span class="n"&gt;database&lt;/span&gt; &lt;span class="s1"&gt;&amp;#39;main&amp;#39;&lt;/span&gt; &lt;span class="n"&gt;on&lt;/span&gt; &lt;span class="n"&gt;server&lt;/span&gt; &lt;span class="s1"&gt;&amp;#39;blogging.db&amp;#39;&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;
+&lt;span class="o"&gt;...&lt;/span&gt;
+&lt;span class="n"&gt;dbug&lt;/span&gt;&lt;span class="o"&gt;:&lt;/span&gt; &lt;span class="mi"&gt;4&lt;/span&gt;&lt;span class="sr"&gt;/11/&lt;/span&gt;&lt;span class="mi"&gt;2021&lt;/span&gt; &lt;span class="mi"&gt;10&lt;/span&gt;&lt;span class="o"&gt;:&lt;/span&gt;&lt;span class="mi"&gt;29&lt;/span&gt;&lt;span class="o"&gt;:&lt;/span&gt;&lt;span class="mf"&gt;52.229&lt;/span&gt; &lt;span class="n"&gt;RelationalEventId&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;TransactionCommitted&lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;20202&lt;/span&gt;&lt;span class="o"&gt;]&lt;/span&gt; &lt;span class="o"&gt;(&lt;/span&gt;&lt;span class="n"&gt;Microsoft&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;EntityFrameworkCore&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;Database&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;Transaction&lt;/span&gt;&lt;span class="o"&gt;)&lt;/span&gt; 
+      &lt;span class="n"&gt;Committed&lt;/span&gt; &lt;span class="n"&gt;transaction&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;
+&lt;span class="n"&gt;dbug&lt;/span&gt;&lt;span class="o"&gt;:&lt;/span&gt; &lt;span class="mi"&gt;4&lt;/span&gt;&lt;span class="sr"&gt;/11/&lt;/span&gt;&lt;span class="mi"&gt;2021&lt;/span&gt; &lt;span class="mi"&gt;10&lt;/span&gt;&lt;span class="o"&gt;:&lt;/span&gt;&lt;span class="mi"&gt;29&lt;/span&gt;&lt;span class="o"&gt;:&lt;/span&gt;&lt;span class="mf"&gt;52.231&lt;/span&gt; &lt;span class="n"&gt;RelationalEventId&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;ConnectionClosing&lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;20002&lt;/span&gt;&lt;span class="o"&gt;]&lt;/span&gt; &lt;span class="o"&gt;(&lt;/span&gt;&lt;span class="n"&gt;Microsoft&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;EntityFrameworkCore&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;Database&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;Connection&lt;/span&gt;&lt;span class="o"&gt;)&lt;/span&gt; 
+      &lt;span class="n"&gt;Closing&lt;/span&gt; &lt;span class="n"&gt;connection&lt;/span&gt; &lt;span class="n"&gt;to&lt;/span&gt; &lt;span class="n"&gt;database&lt;/span&gt; &lt;span class="s1"&gt;&amp;#39;main&amp;#39;&lt;/span&gt; &lt;span class="n"&gt;on&lt;/span&gt; &lt;span class="n"&gt;server&lt;/span&gt; &lt;span class="s1"&gt;&amp;#39;blogging.db&amp;#39;&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;
+&lt;span class="n"&gt;dbug&lt;/span&gt;&lt;span class="o"&gt;:&lt;/span&gt; &lt;span class="mi"&gt;4&lt;/span&gt;&lt;span class="sr"&gt;/11/&lt;/span&gt;&lt;span class="mi"&gt;2021&lt;/span&gt; &lt;span class="mi"&gt;10&lt;/span&gt;&lt;span class="o"&gt;:&lt;/span&gt;&lt;span class="mi"&gt;29&lt;/span&gt;&lt;span class="o"&gt;:&lt;/span&gt;&lt;span class="mf"&gt;52.238&lt;/span&gt; &lt;span class="n"&gt;RelationalEventId&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;ConnectionClosed&lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;20003&lt;/span&gt;&lt;span class="o"&gt;]&lt;/span&gt; &lt;span class="o"&gt;(&lt;/span&gt;&lt;span class="n"&gt;Microsoft&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;EntityFrameworkCore&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;Database&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;Connection&lt;/span&gt;&lt;span class="o"&gt;)&lt;/span&gt; 
+      &lt;span class="n"&gt;Closed&lt;/span&gt; &lt;span class="n"&gt;connection&lt;/span&gt; &lt;span class="n"&gt;to&lt;/span&gt; &lt;span class="n"&gt;database&lt;/span&gt; &lt;span class="s1"&gt;&amp;#39;main&amp;#39;&lt;/span&gt; &lt;span class="n"&gt;on&lt;/span&gt; &lt;span class="n"&gt;server&lt;/span&gt; &lt;span class="s1"&gt;&amp;#39;logging.db&amp;#39;&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;
+&lt;span class="n"&gt;dbug&lt;/span&gt;&lt;span class="o"&gt;:&lt;/span&gt; &lt;span class="mi"&gt;4&lt;/span&gt;&lt;span class="sr"&gt;/11/&lt;/span&gt;&lt;span class="mi"&gt;2021&lt;/span&gt; &lt;span class="mi"&gt;10&lt;/span&gt;&lt;span class="o"&gt;:&lt;/span&gt;&lt;span class="mi"&gt;29&lt;/span&gt;&lt;span class="o"&gt;:&lt;/span&gt;&lt;span class="mf"&gt;52.240&lt;/span&gt; &lt;span class="n"&gt;RelationalEventId&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;TransactionDisposed&lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;20204&lt;/span&gt;&lt;span class="o"&gt;]&lt;/span&gt; &lt;span class="o"&gt;(&lt;/span&gt;&lt;span class="n"&gt;Microsoft&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;EntityFrameworkCore&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;Database&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="na"&gt;Transaction&lt;/span&gt;&lt;span class="o"&gt;)&lt;/span&gt; 
+      &lt;span class="n"&gt;Disposing&lt;/span&gt; &lt;span class="n"&gt;transaction&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;A couple insights here: &lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;ConnectionOpening&lt;/code&gt; happens at 10:29:50.853, &lt;code&gt;ConnectionOpened&lt;/code&gt; at 10:29:51.439, nearly 600 ms to open a connection&lt;/li&gt;
+&lt;li&gt;Despite us reusing the DB context, the connection is closed after the first write, and re-opened on the second write, incurring another delay of nearly 600 ms&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h2&gt;Step 2: Keep DB Context's Connection Alive&lt;/h2&gt;
+&lt;p&gt;First, let's solve the second issue: connection being closed, despite us keeping the DB context. The way to force EF Core to keep the connection open is to open the connection manually in &lt;code&gt;OnConfiguring&lt;/code&gt;:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;        &lt;span class="n"&gt;protected&lt;/span&gt; &lt;span class="n"&gt;override&lt;/span&gt; &lt;span class="n"&gt;void&lt;/span&gt; &lt;span class="n"&gt;OnConfiguring&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;DbContextOptionsBuilder&lt;/span&gt; &lt;span class="n"&gt;options&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="p"&gt;{&lt;/span&gt;
+            &lt;span class="k"&gt;var&lt;/span&gt; &lt;span class="n"&gt;connString&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;new&lt;/span&gt; &lt;span class="n"&gt;SqliteConnectionStringBuilder&lt;/span&gt;
+            &lt;span class="p"&gt;{&lt;/span&gt;
+                &lt;span class="n"&gt;DataSource&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="s2"&gt;&amp;quot;blogging.db&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+                &lt;span class="n"&gt;Password&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="s2"&gt;&amp;quot;password1&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+            &lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;ToString&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;
+
+            &lt;span class="k"&gt;var&lt;/span&gt; &lt;span class="n"&gt;c&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;new&lt;/span&gt; &lt;span class="n"&gt;SqliteConnection&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;connString&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
+            &lt;span class="n"&gt;c&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Open&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;
+
+            &lt;span class="n"&gt;options&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;UseSqlite&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;c&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
+        &lt;span class="p"&gt;}&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;We can verify in the debug spew that EF Core no longer closes the connection, and re-run the perf test:&lt;/p&gt;
+&lt;p&gt;&lt;img alt="" src="http://codevoid.io/images/2021-04-11-10-41-55.png"&gt;&lt;/p&gt;
+&lt;p&gt;The sub-sequent writes no longer incur the connection delay, and are sub-20ms now. &lt;/p&gt;
+&lt;h2&gt;Step 3: Reduce The First-Connection Latency&lt;/h2&gt;
+&lt;p&gt;SQLCipher uses 256-bit AES encryption. You might have noticed we're not giving it a 256-bit key, but a shorter ASCII password instead. This means SQLCipher needs to generate an AES key from the given password (i.e. key derivation), which is computationally intensive, and takes up a good chunk of the 600 ms latency we see. &lt;/p&gt;
+&lt;p&gt;However, SQLCipher also allows us to provide a 256-bit AES key which does not require the key derivation step, and can be provided as a PRAGMA statement:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;        &lt;span class="n"&gt;protected&lt;/span&gt; &lt;span class="n"&gt;override&lt;/span&gt; &lt;span class="n"&gt;void&lt;/span&gt; &lt;span class="n"&gt;OnConfiguring&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;DbContextOptionsBuilder&lt;/span&gt; &lt;span class="n"&gt;options&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="p"&gt;{&lt;/span&gt;
+            &lt;span class="k"&gt;var&lt;/span&gt; &lt;span class="n"&gt;connString&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;new&lt;/span&gt; &lt;span class="n"&gt;SqliteConnectionStringBuilder&lt;/span&gt;
+            &lt;span class="p"&gt;{&lt;/span&gt;
+                &lt;span class="n"&gt;DataSource&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="s2"&gt;&amp;quot;blogging.db&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+            &lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;ToString&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;
+
+            &lt;span class="k"&gt;var&lt;/span&gt; &lt;span class="n"&gt;c&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;new&lt;/span&gt; &lt;span class="n"&gt;SqliteConnection&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;connString&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
+            &lt;span class="n"&gt;c&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Open&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;
+
+            &lt;span class="k"&gt;var&lt;/span&gt; &lt;span class="n"&gt;keyString&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="s2"&gt;&amp;quot;5A7134743777217A25432A462D4A614E645267556B586E3272357538782F413F&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+
+            &lt;span class="n"&gt;using&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;var&lt;/span&gt; &lt;span class="n"&gt;command&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;c&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;CreateCommand&lt;/span&gt;&lt;span class="p"&gt;())&lt;/span&gt;
+            &lt;span class="p"&gt;{&lt;/span&gt;
+                &lt;span class="n"&gt;command&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;CommandText&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="o"&gt;$&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;PRAGMA key = &lt;/span&gt;&lt;span class="se"&gt;\&amp;quot;&lt;/span&gt;&lt;span class="s2"&gt;x&amp;#39;{keyString}&amp;#39;&lt;/span&gt;&lt;span class="se"&gt;\&amp;quot;&lt;/span&gt;&lt;span class="s2"&gt;;&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+                &lt;span class="n"&gt;command&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;ExecuteNonQuery&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;
+            &lt;span class="p"&gt;}&lt;/span&gt;
+
+            &lt;span class="n"&gt;options&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;UseSqlite&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;c&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
+        &lt;span class="p"&gt;}&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;And updated performance test:&lt;/p&gt;
+&lt;p&gt;&lt;img alt="" src="http://codevoid.io/images/2021-04-11-11-08-57.png"&gt;&lt;/p&gt;
+&lt;h2&gt;Step 4: Disable Change Tracking, If Not Using It&lt;/h2&gt;
+&lt;p&gt;In certain situations, we can disable EF Core's change tracking, as per &lt;a href="https://docs.microsoft.com/en-us/dotnet/api/microsoft.entityframeworkcore.dbcontextoptionsbuilder.usequerytrackingbehavior?view=efcore-5.0"&gt;documentation here&lt;/a&gt;: &lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Disabling change tracking is useful for read-only scenarios because it avoids the overhead of setting up change tracking for each entity instance. You should not disable change tracking if you want to manipulate entity instances and persist those changes to the database using SaveChanges().&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Our application's storage layer does its own change tracking, so we do not need to rely on EF Core for it. If you find yourself in a similar situation, shave off some startup overhead by disabling tracking in the DB context, where approppriate: &lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="n"&gt;using&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;var&lt;/span&gt; &lt;span class="n"&gt;db&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;new&lt;/span&gt; &lt;span class="n"&gt;BloggingContext&lt;/span&gt;&lt;span class="p"&gt;())&lt;/span&gt;
+&lt;span class="p"&gt;{&lt;/span&gt;
+    &lt;span class="n"&gt;db&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;ChangeTracker&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;QueryTrackingBehavior&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;QueryTrackingBehavior&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;NoTracking&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+    &lt;span class="o"&gt;...&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;&lt;img alt="" src="http://codevoid.io/images/2021-04-11-11-23-59.png"&gt;&lt;/p&gt;
+&lt;h2&gt;Step 5: Further Tuning Of SQLite/SQLCipher&lt;/h2&gt;
+&lt;p&gt;For non-EF Core specific SQLite/SQLCipher tuning I recommend &lt;a href="https://blog.devart.com/increasing-sqlite-performance.html"&gt;Increasing SQLite Performance&lt;/a&gt; article.&lt;/p&gt;
+&lt;p&gt;The safest performance improvements you can do is changing the &lt;code&gt;JOURNAL_MODE&lt;/code&gt; to &lt;code&gt;TRUNCATE&lt;/code&gt; or &lt;code&gt;PERSIST&lt;/code&gt;. &lt;code&gt;TRUNCATE&lt;/code&gt; will truncate the log file to 0 size after a transaction is committed, rather than deleting it. &lt;code&gt;PERSIST&lt;/code&gt; will fill the log file header with zeros, rather than deleting it. I found that these are quicker on a Windows system than the default &lt;code&gt;DELETE&lt;/code&gt; mode.&lt;/p&gt;
+&lt;p&gt;To try these out, add another command in your &lt;code&gt;OnConfiguring&lt;/code&gt; method, e.g.:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;        &lt;span class="n"&gt;protected&lt;/span&gt; &lt;span class="n"&gt;override&lt;/span&gt; &lt;span class="n"&gt;void&lt;/span&gt; &lt;span class="n"&gt;OnConfiguring&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;DbContextOptionsBuilder&lt;/span&gt; &lt;span class="n"&gt;options&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+        &lt;span class="p"&gt;{&lt;/span&gt;
+            &lt;span class="k"&gt;var&lt;/span&gt; &lt;span class="n"&gt;connString&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;new&lt;/span&gt; &lt;span class="n"&gt;SqliteConnectionStringBuilder&lt;/span&gt;
+            &lt;span class="p"&gt;{&lt;/span&gt;
+                &lt;span class="n"&gt;DataSource&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="s2"&gt;&amp;quot;blogging.db&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+            &lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;ToString&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;
+
+            &lt;span class="k"&gt;var&lt;/span&gt; &lt;span class="n"&gt;c&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;new&lt;/span&gt; &lt;span class="n"&gt;SqliteConnection&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;connString&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
+            &lt;span class="n"&gt;c&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Open&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;
+
+            &lt;span class="k"&gt;var&lt;/span&gt; &lt;span class="n"&gt;keyString&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="s2"&gt;&amp;quot;5A7134743777217A25432A462D4A614E645267556B586E3272357538782F413F&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+
+            &lt;span class="n"&gt;using&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;var&lt;/span&gt; &lt;span class="n"&gt;command&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;c&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;CreateCommand&lt;/span&gt;&lt;span class="p"&gt;())&lt;/span&gt;
+            &lt;span class="p"&gt;{&lt;/span&gt;
+                &lt;span class="n"&gt;command&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;CommandText&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="o"&gt;$&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;PRAGMA key = &lt;/span&gt;&lt;span class="se"&gt;\&amp;quot;&lt;/span&gt;&lt;span class="s2"&gt;x&amp;#39;{keyString}&amp;#39;&lt;/span&gt;&lt;span class="se"&gt;\&amp;quot;&lt;/span&gt;&lt;span class="s2"&gt;;&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+                &lt;span class="n"&gt;command&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;ExecuteNonQuery&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;
+            &lt;span class="p"&gt;}&lt;/span&gt;
+
+            &lt;span class="n"&gt;using&lt;/span&gt; &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;var&lt;/span&gt; &lt;span class="n"&gt;command&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;c&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;CreateCommand&lt;/span&gt;&lt;span class="p"&gt;())&lt;/span&gt;
+            &lt;span class="p"&gt;{&lt;/span&gt;
+                &lt;span class="n"&gt;command&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;CommandText&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="o"&gt;$&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;PRAGMA journal_mode = PERSIST;&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;
+                &lt;span class="n"&gt;command&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;ExecuteNonQuery&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;
+            &lt;span class="p"&gt;}&lt;/span&gt;
+
+            &lt;span class="n"&gt;options&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;UseSqlite&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;c&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;
+        &lt;span class="p"&gt;}&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;Here's the comparison of default &lt;code&gt;DELETE&lt;/code&gt; versus &lt;code&gt;TRUNCATE&lt;/code&gt; and &lt;code&gt;PERSIST&lt;/code&gt;:&lt;/p&gt;
+&lt;p&gt;&lt;img alt="" src="http://codevoid.io/images/2021-04-11-11-33-42.png"&gt;&lt;/p&gt;
+&lt;p&gt;There are further performance tuning options given in the article above, but care needs to be taken when applying them. E.g. setting &lt;code&gt;JOURNAL_MODE&lt;/code&gt; to &lt;code&gt;MEMORY&lt;/code&gt; gets the writes into sub-1ms performance, at the expense of DB intergrity in the case of the crash of the application or system.&lt;/p&gt;</content><category term="Articles"></category></entry><entry><title>Getting started with Hu:toma.ai chat bot platform</title><link href="http://codevoid.io/getting-started-with-hutomaai-chat-bot-platform.html" rel="alternate"></link><published>2017-07-01T10:20:00+01:00</published><updated>2017-07-01T10:20:00+01:00</updated><author><name>Rendijs Smukulis</name></author><id>tag:codevoid.io,2017-07-01:/getting-started-with-hutomaai-chat-bot-platform.html</id><summary type="html">&lt;p&gt;&lt;a href="https://www.hutoma.com/"&gt;Hu:toma&lt;/a&gt; recently launched their open beta, and since I've had 
+a bit of fun playing around with it, I think it deserves a quick post. So what is Hu:toma?
+It's a platform for developing, publishing and selling conversational bots. It enables developing 
+and training bots that your users …&lt;/p&gt;</summary><content type="html">&lt;p&gt;&lt;a href="https://www.hutoma.com/"&gt;Hu:toma&lt;/a&gt; recently launched their open beta, and since I've had 
+a bit of fun playing around with it, I think it deserves a quick post. So what is Hu:toma?
+It's a platform for developing, publishing and selling conversational bots. It enables developing 
+and training bots that your users can have a free-text conversation, while integrating with your 
+APIs. For example:&lt;/p&gt;
+&lt;p&gt;&lt;img alt="Pizza ordering through a free-text chat" src="http://codevoid.io/images/pizza-chat.png"&gt;&lt;/p&gt;
+&lt;p&gt;Hu:toma lets developers upload some training data in the form of example conversations. 
+It then trains the bot using their deep learning network to allow the bots to understand 
+variations of the questions and requests from the users. For more info, watch this &lt;a href="https://www.youtube.com/watch?v=fB82FyKD674"&gt;quick video&lt;/a&gt; or check out their &lt;a href="https://www.hutoma.com/"&gt;site&lt;/a&gt;.&lt;/p&gt;
+&lt;h2&gt;Getting started&lt;/h2&gt;
+&lt;p&gt;Before you can build your first bot, you need to get access to the beta program. At the time of 
+writing there was a wait list for the beta, but this might change soon. To join the waitlist,
+hit their page and click Login, it'll ask for your email. Once you receive the invite, you can
+start training your chat-bot army. &lt;/p&gt;
+&lt;p&gt;Once that's sorted, you can log in to the &lt;a href="https://console.hutoma.com"&gt;console&lt;/a&gt; and create your 
+first bot. Hit the green &lt;code&gt;Create Bot&lt;/code&gt; button:&lt;/p&gt;
+&lt;p&gt;&lt;img alt="Hutoma 1" src="http://codevoid.io/images/hutoma1.png"&gt;&lt;/p&gt;
+&lt;p&gt;Name it something appropriate, I started off with the familiar name of &lt;code&gt;Hello World Bot&lt;/code&gt;, some description, and leaving the other options unchanged:&lt;/p&gt;
+&lt;p&gt;&lt;img alt="Hutoma 2" src="http://codevoid.io/images/hutoma2.png"&gt;&lt;/p&gt;
+&lt;p&gt;Hit &lt;code&gt;Next&lt;/code&gt;, then save your creation:&lt;/p&gt;
+&lt;p&gt;&lt;img alt="Hutoma 3" src="http://codevoid.io/images/hutoma3.png"&gt;&lt;/p&gt;
+&lt;p&gt;Next step is to prepare some basic conversation samples to let the neural net train the bot. Start
+with something basic, and create a text file with these lines:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;hi
+hello, world!
+
+who are you?
+I am the Hello World bot
+
+what is your purpose?
+I pass the butter.
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;In the console, hit &lt;code&gt;select txt file&lt;/code&gt;, pick your newly created training data and upload it:&lt;/p&gt;
+&lt;p&gt;&lt;img alt="Hutoma 4" src="http://codevoid.io/images/hutoma4.png"&gt;&lt;/p&gt;
+&lt;p&gt;After the upload, the training process will start. Once it finishes, you can try chatting to your
+newly trained bot. Note how you do not have to use the exact phrases from training data. For example,the bot will match both &lt;code&gt;hi&lt;/code&gt; and &lt;code&gt;hello&lt;/code&gt; to the response associated with &lt;code&gt;hi&lt;/code&gt;:&lt;/p&gt;
+&lt;p&gt;&lt;img alt="Hutoma 5" src="http://codevoid.io/images/hutoma5.png"&gt;&lt;/p&gt;
+&lt;p&gt;You can imagine training the network with existing data sets of frequently asked questions - this
+would allow users to ask questions in fairly varied forms, and get the specified answers. &lt;/p&gt;
+&lt;h2&gt;Giving the bots a purpose&lt;/h2&gt;
+&lt;p&gt;While being able to train the bot with some pre-defined questions and answers is neat, 
+the really interesting interactions happen when the bot can perform some action; e.g. the previously
+mentioned pizza-ordering bot. &lt;/p&gt;
+&lt;p&gt;Hutoma uses two concepts to allow a bot perform an action. The task itself is called an &lt;code&gt;intent&lt;/code&gt;. Example
+intents might be &lt;code&gt;order a pizza&lt;/code&gt;, &lt;code&gt;call a cab&lt;/code&gt; or &lt;code&gt;check weather info&lt;/code&gt;. The "inputs" to these actions are (somewhat ambiguously) named
+&lt;code&gt;entities&lt;/code&gt;. For example, if the pizza-ordering intent needs to know the size of the pizza and the type of the toppings, it would
+use two entities, &lt;code&gt;topping&lt;/code&gt; and &lt;code&gt;size&lt;/code&gt;. Think of each entity as an enum, you can specify the range of values for it,
+then the user chooses one by talking to the bot.&lt;/p&gt;
+&lt;p&gt;Let's create a bot that can report the top threads in a given subreddit on &lt;a href="https://www.redit.com"&gt;Reddit&lt;/a&gt;. To report on a given 
+subreddit, the bot will need to know which subreddit we are interested in. As such, we need to create a new &lt;code&gt;entity&lt;/code&gt;. In the left 
+hand menum, select the bot you created earlier, and choose &lt;code&gt;entities&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;&lt;img alt="Hutoma 6" src="http://codevoid.io/images/hutoma6.png"&gt;&lt;/p&gt;
+&lt;p&gt;Create a new entity with a meaningful name, e.g. &lt;code&gt;subreddit&lt;/code&gt;. Then add some subreddit names you want the bot to be able to query and save it.&lt;/p&gt;
+&lt;p&gt;&lt;img alt="Hutoma 7" src="http://codevoid.io/images/hutoma7.png"&gt;&lt;/p&gt;
+&lt;p&gt;Next we need to create an intent that represents the "get top subreddit threads" task. Navigate to the &lt;code&gt;intents&lt;/code&gt; section. In there,
+name your new intent (e.g. &lt;code&gt;subreddit-top-thread-loader&lt;/code&gt;) and click create. &lt;/p&gt;
+&lt;p&gt;Under &lt;code&gt;User Expressions&lt;/code&gt;, enter some sample queries users might initiate the intent (task) with. For the Reddit intent, I've used:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;what&amp;#39;s new on reddit
+what&amp;#39;s hot on reddit
+what&amp;#39;s hot in worldnews
+what&amp;#39;s new on /r/cars
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;Including the entity value in the query allows the bot to figure out which subreddit the user is interested in without 
+queryign for it separately.&lt;/p&gt;
+&lt;p&gt;Next, you need to add the &lt;code&gt;subreddit&lt;/code&gt; entity and give a sample &lt;code&gt;prompt&lt;/code&gt; for it. Bot will use this prompt to ask the user to
+choose a subreddit if they haven't already done so.&lt;/p&gt;
+&lt;p&gt;&lt;img alt="Hutoma 8" src="http://codevoid.io/images/hutoma8.png"&gt;&lt;/p&gt;
+&lt;p&gt;Next, choose a default response, e.g. &lt;code&gt;I'll get right on it!&lt;/code&gt;. Normally, when using a webhook, the bot would only use the
+response when the call to the webhook failed. For our initial testing without a webhook, we'll always expect to see the 
+default response.&lt;/p&gt;
+&lt;p&gt;Hit &lt;code&gt;Save Intent&lt;/code&gt;, and, after the re-training is done, you can chat away: &lt;/p&gt;
+&lt;p&gt;&lt;img alt="Hutoma 9" src="http://codevoid.io/images/hutoma9.png"&gt;&lt;/p&gt;
+&lt;p&gt;Note the bot queries me for the specific subreddit when I didn't mention it in the first question, but
+picks up the subreddit name when I ask &lt;code&gt;what's new on /r/worldnews&lt;/code&gt;.&lt;/p&gt;
+&lt;h2&gt;Getting the message across&lt;/h2&gt;
+&lt;p&gt;Now that our bot can interpret what we want to load from Reddit, let's actually enable it to load some threads from
+the requested subreddit. To achieve this, we need a web service that can act as a proxy between our bot
+and Reddit. It will provide an interface for the bot to call, retrieve some data from Reddit, then return that to
+the bot. &lt;/p&gt;
+&lt;p&gt;I used &lt;a href="http://docs.aws.amazon.com/apigateway/latest/developerguide/getting-started.html"&gt;AWS API Gateway and a Lambda function&lt;/a&gt; to react to requests, but that's just one of the many posible solutions. To integrate your bot with an API, all you need to do is provide the API endpoint's
+URL in the WebHook part of the bot's configuration. The endpoint needs to accept a POST request.&lt;/p&gt;
+&lt;p&gt;Here's a sample request Hutoma bot fires at the API:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="p"&gt;{&lt;/span&gt;  
+    &lt;span class="nt"&gt;&amp;quot;intentName&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;subreddit-top-thread-loader&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+    &lt;span class="nt"&gt;&amp;quot;memoryVariables&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:[&lt;/span&gt;  
+        &lt;span class="p"&gt;{&lt;/span&gt;  
+            &lt;span class="nt"&gt;&amp;quot;entity&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;subreddit&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+            &lt;span class="nt"&gt;&amp;quot;value&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;cars&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+            &lt;span class="nt"&gt;&amp;quot;mandatory&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="kc"&gt;true&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+            &lt;span class="nt"&gt;&amp;quot;entity_keys&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:[&lt;/span&gt;  
+                &lt;span class="s2"&gt;&amp;quot;aww&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+                &lt;span class="s2"&gt;&amp;quot;cars&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+                &lt;span class="s2"&gt;&amp;quot;cats&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+                &lt;span class="s2"&gt;&amp;quot;showerthoughts&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+                &lt;span class="s2"&gt;&amp;quot;unitedkingdom&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+                &lt;span class="s2"&gt;&amp;quot;worldnews&amp;quot;&lt;/span&gt;
+            &lt;span class="p"&gt;],&lt;/span&gt;
+            &lt;span class="nt"&gt;&amp;quot;prompts&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:[&lt;/span&gt;  
+                &lt;span class="s2"&gt;&amp;quot;Which subreddit are you interested in?&amp;quot;&lt;/span&gt;
+            &lt;span class="p"&gt;],&lt;/span&gt;
+            &lt;span class="nt"&gt;&amp;quot;times_prompted&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+            &lt;span class="nt"&gt;&amp;quot;max_prompts&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="mi"&gt;3&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+            &lt;span class="nt"&gt;&amp;quot;persistent&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="kc"&gt;false&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+            &lt;span class="nt"&gt;&amp;quot;system_entity&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="kc"&gt;false&lt;/span&gt;
+        &lt;span class="p"&gt;}&lt;/span&gt;
+    &lt;span class="p"&gt;],&lt;/span&gt;
+    &lt;span class="nt"&gt;&amp;quot;chatResult&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:{&lt;/span&gt;  
+        &lt;span class="nt"&gt;&amp;quot;score&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="mf"&gt;1.0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+        &lt;span class="nt"&gt;&amp;quot;query&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;what&amp;#39;s new on /r/cars?&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+        &lt;span class="nt"&gt;&amp;quot;answer&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;I&amp;#39;ll get right on it!&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+        &lt;span class="nt"&gt;&amp;quot;elapsedTime&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="mf"&gt;2.764&lt;/span&gt;
+    &lt;span class="p"&gt;}&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;It includes everything we need to react to the request:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;The original query by the user&lt;/li&gt;
+&lt;li&gt;The intent's entity type (&lt;code&gt;subreddit&lt;/code&gt;)&lt;/li&gt;
+&lt;li&gt;The value of the entity, &lt;code&gt;cars&lt;/code&gt; in this case, meaning the user is interested in the &lt;code&gt;/r/cars&lt;/code&gt; subreddit.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;I used reddit's &lt;a href="https://praw.readthedocs.io/en/latest/"&gt;praw&lt;/a&gt; library to load the new submissions. Here's the code for the 
+Lambda function:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="kn"&gt;import&lt;/span&gt; &lt;span class="nn"&gt;praw&lt;/span&gt;
+
+&lt;span class="n"&gt;reddit&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;praw&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Reddit&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;client_id&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="s1"&gt;&amp;#39;[YOUR CLIENT ID HERE]&amp;#39;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+                    &lt;span class="n"&gt;client_secret&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="s1"&gt;&amp;#39;[YOUR CLIENT SECRET]&amp;#39;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;
+                    &lt;span class="n"&gt;user_agent&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="s1"&gt;&amp;#39;AWS Lambda PRAW client&amp;#39;&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+
+&lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;lambda_handler&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;event&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;context&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+    &lt;span class="c1"&gt;# Extract the required subreddit&amp;#39;s name from the Hutoma request&lt;/span&gt;
+    &lt;span class="n"&gt;kvps&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;_get_kvp_from_hutoma_request&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;event&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+    &lt;span class="n"&gt;subreddit&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;kvps&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s1"&gt;&amp;#39;subreddit&amp;#39;&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;
+
+    &lt;span class="c1"&gt;# Load some data from the subreddit&lt;/span&gt;
+    &lt;span class="n"&gt;titles&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;[]&lt;/span&gt;
+    &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;submission&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="n"&gt;reddit&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;subreddit&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;subreddit&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;hot&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;limit&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mi"&gt;5&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+        &lt;span class="n"&gt;titles&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;append&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s1"&gt;&amp;#39;&amp;quot;&lt;/span&gt;&lt;span class="si"&gt;{}&lt;/span&gt;&lt;span class="s1"&gt;&amp;quot;: https://reddit.com&lt;/span&gt;&lt;span class="si"&gt;{}&lt;/span&gt;&lt;span class="s1"&gt;&amp;#39;&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;format&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;submission&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;title&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;submission&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;permalink&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt;
+
+    &lt;span class="c1"&gt;# Return to the Hutoma bot    &lt;/span&gt;
+    &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="s2"&gt;&amp;quot;text&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt; &lt;span class="s1"&gt;&amp;#39; &lt;/span&gt;&lt;span class="se"&gt;\r\n\r\n&lt;/span&gt;&lt;span class="s1"&gt;&amp;#39;&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;join&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;titles&lt;/span&gt;&lt;span class="p"&gt;)}&lt;/span&gt;
+
+&lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;_get_kvp_from_hutoma_request&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;request&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;
+    &lt;span class="sd"&gt;&amp;quot;&amp;quot;&amp;quot;Transforms the Hutoma Request into a key-value dictionary&amp;quot;&amp;quot;&amp;quot;&lt;/span&gt;
+    &lt;span class="n"&gt;entity_dict&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="p"&gt;{}&lt;/span&gt; 
+    &lt;span class="k"&gt;for&lt;/span&gt; &lt;span class="n"&gt;h_var&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="n"&gt;request&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s1"&gt;&amp;#39;memoryVariables&amp;#39;&lt;/span&gt;&lt;span class="p"&gt;]:&lt;/span&gt;
+        &lt;span class="n"&gt;h_value&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;h_var&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s1"&gt;&amp;#39;entity&amp;#39;&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;
+        &lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="n"&gt;h_value&lt;/span&gt; &lt;span class="ow"&gt;not&lt;/span&gt; &lt;span class="ow"&gt;in&lt;/span&gt; &lt;span class="n"&gt;entity_dict&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+            &lt;span class="n"&gt;entity_dict&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="n"&gt;h_value&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;h_var&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="s1"&gt;&amp;#39;value&amp;#39;&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;
+
+    &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;entity_dict&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;This will return the titles and URLs of the top five hot submissions in the requested subreddit. After adding the API's URL to the bot's WebHook setting, you can chat with the bot and have it fetch data from the new endpoint:&lt;/p&gt;</content><category term="Articles"></category></entry><entry><title>Hosting a Python web service in Gunicorn and Docker</title><link href="http://codevoid.io/hosting-a-python-web-service-in-gunicorn-and-docker.html" rel="alternate"></link><published>2017-04-25T10:20:00+01:00</published><updated>2017-04-25T10:20:00+01:00</updated><author><name>Rendijs Smukulis</name></author><id>tag:codevoid.io,2017-04-25:/hosting-a-python-web-service-in-gunicorn-and-docker.html</id><summary type="html">&lt;p&gt;So you've written an aiohttp (or Flask, or Tornado..) app in Python, and want to run it as a production service. 
+The easiest approach would be to simply run it in production the same way you do while developing, simply 
+by calling &lt;code&gt;python server.py&lt;/code&gt;. While this is a simple …&lt;/p&gt;</summary><content type="html">&lt;p&gt;So you've written an aiohttp (or Flask, or Tornado..) app in Python, and want to run it as a production service. 
+The easiest approach would be to simply run it in production the same way you do while developing, simply 
+by calling &lt;code&gt;python server.py&lt;/code&gt;. While this is a simple approach, and works well while developing, aiohttp is
+not actually a webserver - it's a framework that is intended to be hosted in a production-ready webserver. 
+One such webserver is &lt;a href="http://gunicorn.org/"&gt;Gunicorn&lt;/a&gt;, used to host Python-based web services. The main argument for using Gunicorn
+is raw performance: Gunicorn will run enough aiohttp processes to use all available CPU cores, while aiohttp's
+development webserver would only run it in a single process. Other benefits of using Gunicorn are improved security and its configurability. There is a good post on this topic found on 
+&lt;a href="https://serverfault.com/questions/331256/why-do-i-need-nginx-and-something-like-gunicorn"&gt;serverfault&lt;/a&gt;
+by the Gunicorn's developer. &lt;/p&gt;
+&lt;p&gt;This walkthrough will start off with the code from the simple aiohttp project built in the &lt;a href="//codevoid.io/building-a-hello-world-docker-image-for-a-python-service.html"&gt;previous
+post&lt;/a&gt;. You can clone it 
+from &lt;a href="https://github.com/RendijsSmukulis/docker-aiohttp-hello-world"&gt;github&lt;/a&gt; or modify the code samples to
+match your own project. &lt;/p&gt;
+
+
+&lt;h2&gt;Running Gunicorn natively&lt;/h2&gt;
+&lt;p&gt;First, install Gunicorn:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;pip install gunicorn
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;Next, we need to modify &lt;code&gt;server.py&lt;/code&gt; to not use the development webserver when it's included as a module. As it currecntly stands, &lt;code&gt;server.py&lt;/code&gt;
+will always run the aiohttp's internal webserver:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="n"&gt;app&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;web&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Application&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+&lt;span class="n"&gt;app&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;router&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;add_get&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s1"&gt;&amp;#39;/&amp;#39;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;handle&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;span class="n"&gt;app&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;router&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;add_get&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s1"&gt;&amp;#39;/&lt;/span&gt;&lt;span class="si"&gt;{name}&lt;/span&gt;&lt;span class="s1"&gt;&amp;#39;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;handle&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+
+&lt;span class="n"&gt;web&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;run_app&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;app&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;port&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mi"&gt;5858&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;Gunicorn will include this file as a module, and we don't want the development server to be started - but 
+it would be handy to still be able to run it from the python interpreter while developing. To achieve this,
+add the following check before the line that starts the server:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="n"&gt;app&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;web&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Application&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+&lt;span class="n"&gt;app&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;router&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;add_get&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s1"&gt;&amp;#39;/&amp;#39;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;handle&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;span class="n"&gt;app&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;router&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;add_get&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s1"&gt;&amp;#39;/&lt;/span&gt;&lt;span class="si"&gt;{name}&lt;/span&gt;&lt;span class="s1"&gt;&amp;#39;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;handle&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+
+&lt;span class="k"&gt;if&lt;/span&gt; &lt;span class="vm"&gt;__name__&lt;/span&gt; &lt;span class="o"&gt;==&lt;/span&gt; &lt;span class="s1"&gt;&amp;#39;__main__&amp;#39;&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;
+    &lt;span class="n"&gt;web&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;run_app&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;app&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;port&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mi"&gt;5858&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;Next step is to create the configuration file for Gunicorn. Create a &lt;code&gt;gunicorn.conf&lt;/code&gt; file in the same folder
+as &lt;code&gt;server.py&lt;/code&gt;, and populate it with:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="kn"&gt;import&lt;/span&gt; &lt;span class="nn"&gt;multiprocessing&lt;/span&gt;
+
+&lt;span class="c1"&gt;# listen to port 5858 on all available network interfaces&lt;/span&gt;
+&lt;span class="n"&gt;bind&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="s2"&gt;&amp;quot;0.0.0.0:5858&amp;quot;&lt;/span&gt;
+
+&lt;span class="c1"&gt;# Run the aiohttp app in multiple processes&lt;/span&gt;
+&lt;span class="n"&gt;workers&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;multiprocessing&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;cpu_count&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt; &lt;span class="o"&gt;*&lt;/span&gt; &lt;span class="mi"&gt;2&lt;/span&gt; &lt;span class="o"&gt;+&lt;/span&gt; &lt;span class="mi"&gt;1&lt;/span&gt;
+
+&lt;span class="c1"&gt;# Use the correct worker class for aiohttp - this will change is using a different framework&lt;/span&gt;
+&lt;span class="n"&gt;worker_class&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="s1"&gt;&amp;#39;aiohttp.worker.GunicornWebWorker&amp;#39;&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;Gunicorn can now be run by calling:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;gunicorn -c gunicorn.conf server:app
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;&lt;code&gt;-c gunicorn.conf&lt;/code&gt; will instruct Gunicorn to use the appropriate config file, while &lt;code&gt;server:app&lt;/code&gt; defines
+the entry point into the aiohttp app. &lt;/p&gt;
+&lt;p&gt;&lt;em&gt;Note: At the time of writing, Gunicorn does not run on Windows systems. To run it natively you will have to
+use a Linux or Mac machine, or run it in Docker under Windows. The issue is tracked 
+&lt;a href="https://github.com/benoitc/gunicorn/issues/524"&gt;here&lt;/a&gt;.&lt;/em&gt;  &lt;/p&gt;
+&lt;p&gt;Once Gunicorn has started, it will report its state to the console:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="mi"&gt;2017&lt;/span&gt;&lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="mi"&gt;04&lt;/span&gt;&lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="mi"&gt;24&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;22&lt;/span&gt;&lt;span class="err"&gt;:&lt;/span&gt;&lt;span class="mi"&gt;23&lt;/span&gt;&lt;span class="err"&gt;:&lt;/span&gt;&lt;span class="mi"&gt;03&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;+&lt;/span&gt;&lt;span class="mi"&gt;0000&lt;/span&gt;&lt;span class="err"&gt;]&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="n"&gt;1&lt;/span&gt;&lt;span class="o"&gt;]&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="n"&gt;INFO&lt;/span&gt;&lt;span class="o"&gt;]&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;Starting&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;gunicorn&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mf"&gt;19.7.1&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="mi"&gt;2017&lt;/span&gt;&lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="mi"&gt;04&lt;/span&gt;&lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="mi"&gt;24&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;22&lt;/span&gt;&lt;span class="err"&gt;:&lt;/span&gt;&lt;span class="mi"&gt;23&lt;/span&gt;&lt;span class="err"&gt;:&lt;/span&gt;&lt;span class="mi"&gt;03&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;+&lt;/span&gt;&lt;span class="mi"&gt;0000&lt;/span&gt;&lt;span class="err"&gt;]&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="n"&gt;1&lt;/span&gt;&lt;span class="o"&gt;]&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="n"&gt;INFO&lt;/span&gt;&lt;span class="o"&gt;]&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;Listening&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;at&lt;/span&gt;&lt;span class="err"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nl"&gt;http&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="o"&gt;//&lt;/span&gt;&lt;span class="mf"&gt;0.0.0.0&lt;/span&gt;&lt;span class="err"&gt;:&lt;/span&gt;&lt;span class="mi"&gt;5858&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="mi"&gt;2017&lt;/span&gt;&lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="mi"&gt;04&lt;/span&gt;&lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="mi"&gt;24&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;22&lt;/span&gt;&lt;span class="err"&gt;:&lt;/span&gt;&lt;span class="mi"&gt;23&lt;/span&gt;&lt;span class="err"&gt;:&lt;/span&gt;&lt;span class="mi"&gt;03&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;+&lt;/span&gt;&lt;span class="mi"&gt;0000&lt;/span&gt;&lt;span class="err"&gt;]&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="n"&gt;1&lt;/span&gt;&lt;span class="o"&gt;]&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="n"&gt;INFO&lt;/span&gt;&lt;span class="o"&gt;]&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;Using&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nl"&gt;worker&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;aiohttp&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;worker&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;GunicornWebWorker&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="mi"&gt;2017&lt;/span&gt;&lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="mi"&gt;04&lt;/span&gt;&lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="mi"&gt;24&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;22&lt;/span&gt;&lt;span class="err"&gt;:&lt;/span&gt;&lt;span class="mi"&gt;23&lt;/span&gt;&lt;span class="err"&gt;:&lt;/span&gt;&lt;span class="mi"&gt;03&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;+&lt;/span&gt;&lt;span class="mi"&gt;0000&lt;/span&gt;&lt;span class="err"&gt;]&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="n"&gt;8&lt;/span&gt;&lt;span class="o"&gt;]&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="n"&gt;INFO&lt;/span&gt;&lt;span class="o"&gt;]&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;Booting&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;worker&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;with&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nl"&gt;pid&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;8&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="mi"&gt;2017&lt;/span&gt;&lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="mi"&gt;04&lt;/span&gt;&lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="mi"&gt;24&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;22&lt;/span&gt;&lt;span class="err"&gt;:&lt;/span&gt;&lt;span class="mi"&gt;23&lt;/span&gt;&lt;span class="err"&gt;:&lt;/span&gt;&lt;span class="mi"&gt;03&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;+&lt;/span&gt;&lt;span class="mi"&gt;0000&lt;/span&gt;&lt;span class="err"&gt;]&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="n"&gt;9&lt;/span&gt;&lt;span class="o"&gt;]&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="n"&gt;INFO&lt;/span&gt;&lt;span class="o"&gt;]&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;Booting&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;worker&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;with&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nl"&gt;pid&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;9&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="mi"&gt;2017&lt;/span&gt;&lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="mi"&gt;04&lt;/span&gt;&lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="mi"&gt;24&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;22&lt;/span&gt;&lt;span class="err"&gt;:&lt;/span&gt;&lt;span class="mi"&gt;23&lt;/span&gt;&lt;span class="err"&gt;:&lt;/span&gt;&lt;span class="mi"&gt;03&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;+&lt;/span&gt;&lt;span class="mi"&gt;0000&lt;/span&gt;&lt;span class="err"&gt;]&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="n"&gt;10&lt;/span&gt;&lt;span class="o"&gt;]&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="n"&gt;INFO&lt;/span&gt;&lt;span class="o"&gt;]&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;Booting&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;worker&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;with&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nl"&gt;pid&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;10&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="mi"&gt;2017&lt;/span&gt;&lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="mi"&gt;04&lt;/span&gt;&lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="mi"&gt;24&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;22&lt;/span&gt;&lt;span class="err"&gt;:&lt;/span&gt;&lt;span class="mi"&gt;23&lt;/span&gt;&lt;span class="err"&gt;:&lt;/span&gt;&lt;span class="mi"&gt;03&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;+&lt;/span&gt;&lt;span class="mi"&gt;0000&lt;/span&gt;&lt;span class="err"&gt;]&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="n"&gt;11&lt;/span&gt;&lt;span class="o"&gt;]&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="n"&gt;INFO&lt;/span&gt;&lt;span class="o"&gt;]&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;Booting&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;worker&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;with&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nl"&gt;pid&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;11&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="mi"&gt;2017&lt;/span&gt;&lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="mi"&gt;04&lt;/span&gt;&lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="mi"&gt;24&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;22&lt;/span&gt;&lt;span class="err"&gt;:&lt;/span&gt;&lt;span class="mi"&gt;23&lt;/span&gt;&lt;span class="err"&gt;:&lt;/span&gt;&lt;span class="mi"&gt;03&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;+&lt;/span&gt;&lt;span class="mi"&gt;0000&lt;/span&gt;&lt;span class="err"&gt;]&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="n"&gt;13&lt;/span&gt;&lt;span class="o"&gt;]&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;[&lt;/span&gt;&lt;span class="n"&gt;INFO&lt;/span&gt;&lt;span class="o"&gt;]&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;Booting&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;worker&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;with&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nl"&gt;pid&lt;/span&gt;&lt;span class="p"&gt;:&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;13&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;After seeing this, you can now hit the service with your browser at http://127.0.0.1:5858. &lt;/p&gt;
+&lt;h2&gt;Running Gunicorn in Docker&lt;/h2&gt;
+&lt;p&gt;To run Gunicorn in Docker, we'll have to modify our existing &lt;code&gt;Dockerfile&lt;/code&gt; to:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;include the gunicorn.conf file in the Docker image&lt;/li&gt;
+&lt;li&gt;install Gunicorn&lt;/li&gt;
+&lt;li&gt;run the service using Gunicorn rather than the Python interpreter&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;To copy the configuration file, add a &lt;code&gt;COPY&lt;/code&gt; instruction after the &lt;code&gt;COPY&lt;/code&gt; instructions already in the file:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;COPY gunicorn.conf /
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;Next, add a command that will install the &lt;code&gt;gunicorn&lt;/code&gt; dependency in the image:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;RUN pip install gunicorn
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;Alternatively, we could have added &lt;code&gt;gunicorn&lt;/code&gt; to the &lt;code&gt;requirements.txt&lt;/code&gt; file, and thus have it installed
+when &lt;code&gt;pip install -r requirements.txt&lt;/code&gt; is run. However, the project does not require Gunicorn to run with the 
+aiohttp's development server, so I've opted to exclude the dependency from &lt;code&gt;requirements.txt&lt;/code&gt;. &lt;/p&gt;
+&lt;p&gt;Next, replace the existing &lt;code&gt;CMD&lt;/code&gt; command with a call to start the Gunicorn server:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;CMD [&amp;quot;gunicorn&amp;quot;, &amp;quot;-c&amp;quot;, &amp;quot;gunicorn.conf&amp;quot;, &amp;quot;server:app&amp;quot;]
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;Your &lt;code&gt;Dockerfile&lt;/code&gt; should now look like this:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;FROM python:3
+COPY server.py /
+COPY gunicorn.conf /
+COPY requirements.txt /
+COPY opentsdb_tagcounter_reporter.py /
+COPY tagged_counter.py /
+RUN pip install -r requirements.txt
+CMD [ &amp;quot;gunicorn&amp;quot;, &amp;quot;-c&amp;quot;, &amp;quot;gunicorn.conf&amp;quot;, &amp;quot;server:app&amp;quot; ]
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;You can now build and run the Docker image:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;docker build -t docker-aiohttp-gunicorn .
+docker run -p 5858:5858 docker-aiohttp-gunicorn
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;You can now verify the image has been built successfully and server is running as expected
+by navigating to http://127.0.0.1:5858 .&lt;/p&gt;
+&lt;p&gt;This Docker image can now be easily shared (e.g. by uploading it to &lt;a href="https://hub.docker.com/"&gt;Docker Hub&lt;/a&gt;) 
+and run on various platforms, such as &lt;a href="https://aws.amazon.com/ecs/getting-started/"&gt;Amazon's EC2 Container Services&lt;/a&gt;.  &lt;/p&gt;
+&lt;p&gt;&lt;em&gt;The source files can be found on &lt;a href="https://github.com/RendijsSmukulis/docker-aiohttp-gunicorn"&gt;github&lt;/a&gt;.&lt;/em&gt;&lt;/p&gt;</content><category term="Articles"></category></entry><entry><title>Building A 'Hello World' Docker Image For A Python Service</title><link href="http://codevoid.io/building-a-hello-world-docker-image-for-a-python-service.html" rel="alternate"></link><published>2017-04-16T10:20:00+01:00</published><updated>2017-04-16T10:20:00+01:00</updated><author><name>Rendijs Smukulis</name></author><id>tag:codevoid.io,2017-04-16:/building-a-hello-world-docker-image-for-a-python-service.html</id><summary type="html">&lt;p&gt;&lt;em&gt;Note: this walkthrough assumes you have Python 3 and docker installed on your machine.&lt;/em&gt;&lt;/p&gt;
+&lt;p&gt;Python 3.4 added support for asynchronous I/O code, known as &lt;a href="https://docs.python.org/3/library/asyncio.html"&gt;asyncio&lt;/a&gt;. 
+Asyncio allows writing performant code that would have previously been bottlenecked by IO performance, and has spawned 
+a number of great libraries based …&lt;/p&gt;</summary><content type="html">&lt;p&gt;&lt;em&gt;Note: this walkthrough assumes you have Python 3 and docker installed on your machine.&lt;/em&gt;&lt;/p&gt;
+&lt;p&gt;Python 3.4 added support for asynchronous I/O code, known as &lt;a href="https://docs.python.org/3/library/asyncio.html"&gt;asyncio&lt;/a&gt;. 
+Asyncio allows writing performant code that would have previously been bottlenecked by IO performance, and has spawned 
+a number of great libraries based on it. One of these libraries is &lt;a href="http://aiohttp.readthedocs.io/en/stable/"&gt;aiohttp&lt;/a&gt;,
+an asynchronous HTTP client/server which can support much larger number of parallel requests when compared to other 
+client-side libraries (e.g. urllib or requests), or server-side libraries (e.g. flask). &lt;/p&gt;
+&lt;p&gt;After a cursory search, I could not find a Docker image with a basic 'hello world' implementation of an aiohttp server,
+so decided to build one, and document the process. &lt;/p&gt;
+
+
+&lt;h2&gt;Creating the service in Python&lt;/h2&gt;
+&lt;p&gt;For a basic hello-world style service only two files are needed:
+- server.py with the routing and handler code
+- requirements.txt to list the external dependencies. For this project, it'll only be the &lt;code&gt;aiohttp&lt;/code&gt; package&lt;/p&gt;
+&lt;p&gt;To start, create a directory to contain the project files, e.g. docker-aiohttp-hello-world. &lt;/p&gt;
+&lt;p&gt;In the directory, create the 'requirements.txt' file and add the aiohttp dependency to it:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;aiohttp==2.0.7
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;I'm pinning the version to 2.0.7 to ensure the image still works if future releases of aiohttp break backwards 
+compatibility.&lt;/p&gt;
+&lt;p&gt;Then create 'server.py' file, and add the example code, slightly modified from aiohttp's docs:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="kn"&gt;from&lt;/span&gt; &lt;span class="nn"&gt;aiohttp&lt;/span&gt; &lt;span class="kn"&gt;import&lt;/span&gt; &lt;span class="n"&gt;web&lt;/span&gt;
+
+&lt;span class="k"&gt;async&lt;/span&gt; &lt;span class="k"&gt;def&lt;/span&gt; &lt;span class="nf"&gt;handle&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;request&lt;/span&gt;&lt;span class="p"&gt;):&lt;/span&gt;      
+    &lt;span class="n"&gt;name&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;request&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;match_info&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;get&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s1"&gt;&amp;#39;name&amp;#39;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="s2"&gt;&amp;quot;World!&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+    &lt;span class="n"&gt;text&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="s2"&gt;&amp;quot;Hello, &amp;quot;&lt;/span&gt; &lt;span class="o"&gt;+&lt;/span&gt; &lt;span class="n"&gt;name&lt;/span&gt;
+    &lt;span class="nb"&gt;print&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s1"&gt;&amp;#39;received request, replying with &amp;quot;&lt;/span&gt;&lt;span class="si"&gt;{}&lt;/span&gt;&lt;span class="s1"&gt;&amp;quot;.&amp;#39;&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;format&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;text&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt;
+    &lt;span class="k"&gt;return&lt;/span&gt; &lt;span class="n"&gt;web&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Response&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;text&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="n"&gt;text&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+
+&lt;span class="n"&gt;app&lt;/span&gt; &lt;span class="o"&gt;=&lt;/span&gt; &lt;span class="n"&gt;web&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;Application&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;
+&lt;span class="n"&gt;app&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;router&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;add_get&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s1"&gt;&amp;#39;/&amp;#39;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;handle&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;span class="n"&gt;app&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;router&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;add_get&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s1"&gt;&amp;#39;/&lt;/span&gt;&lt;span class="si"&gt;{name}&lt;/span&gt;&lt;span class="s1"&gt;&amp;#39;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;handle&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+
+&lt;span class="n"&gt;web&lt;/span&gt;&lt;span class="o"&gt;.&lt;/span&gt;&lt;span class="n"&gt;run_app&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;app&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt; &lt;span class="n"&gt;port&lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="mi"&gt;5858&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;Install the dependencies listed in requirements.txt by running &lt;code&gt;pip install -r requirements.txt&lt;/code&gt;. You can now run the 
+service by running &lt;code&gt;python server.py&lt;/code&gt;, and will see it's running on port 5858 after it starts:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;Connected to pydev debugger (build 163.10154.50)
+======== Running on http://0.0.0.0:5858 ========
+(Press CTRL+C to quit)
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;Hitting the service at http://localhost:5858 will display the hello world message:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;Hello, World!
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;While adding another segment to the url will use it as the &lt;code&gt;name&lt;/code&gt; variable. http://localhost:5858/everybody will return:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;Hello, everybody
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;This means the service is working as expected. We can stop it, and focus on creating a Docker image for it.  &lt;/p&gt;
+&lt;h2&gt;Creating the Docker image&lt;/h2&gt;
+&lt;p&gt;To run this service in Docker, we need to specify that:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;The base image to use is the python:3 image&lt;/li&gt;
+&lt;li&gt;The server.py and requirements.txt files need to be included in the new image&lt;/li&gt;
+&lt;li&gt;PIP needs to install the dependencies listed in requirements.txt&lt;/li&gt;
+&lt;li&gt;The service itself needs to be run&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;To achieve this, first create a file called 'Dockerfile' in the same directory as the other files. &lt;/p&gt;
+&lt;p&gt;Add the line instructing Docker to use the python:3 base image:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;FROM python:3
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;This will pull a base image that already has Python 3 installed, so there is no need to set it up separately.&lt;/p&gt;
+&lt;p&gt;Next, add the line indicating the two files that need to be added to the new image:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;COPY server.py /
+COPY requirements.txt /
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;Then, add the line that will install the Python application's dependencies from requirements.txt:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;RUN pip install -r requirements.txt
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;The RUN command is executed when the image is built, as opposed to the CMD command, which is executed when the docker image is actually run 
+(i.e. a running container is actually created).&lt;/p&gt;
+&lt;p&gt;Lastly, add the line that instructs Docker to start our Python service when the image is run:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;CMD [ &amp;quot;python&amp;quot;, &amp;quot;-u&amp;quot;, &amp;quot;server.py&amp;quot; ]
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;The '-u' parameter will instruct the Python interpreter to not buffer the output to console. Without this, the 
+Python output does not seem to be forwarded to the docker host. &lt;/p&gt;
+&lt;p&gt;To contrast the last two commands, &lt;code&gt;RUN&lt;/code&gt; and &lt;code&gt;CMD&lt;/code&gt;:
+- &lt;code&gt;RUN&lt;/code&gt; will be executed during the creation of the docker image. Thus, any changes to the file system (e.g. 
+downloading dependencies from PIP) will be included in the image
+- &lt;code&gt;CMD&lt;/code&gt; will be executed when the docker image is run. The 'pip install' command could be performed at this step
+as well, but it would slow down the start time of each instance. &lt;/p&gt;
+&lt;p&gt;After this, your Dockerfile should look like this:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;FROM python:3
+COPY server.py /
+COPY requirements.txt /
+RUN pip install -r requirements.txt
+CMD [ &amp;quot;python&amp;quot;, &amp;quot;-u&amp;quot;, &amp;quot;server.py&amp;quot; ]
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;To build the docker image, open your command prompt/shell at the directory you created the sources, and run:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;docker build -t docker-aiohttp-hello-world .
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;This will build the image and give it a 'docker-aiohttp-hello-world' name tag. After running this, you should 
+see docker successfully create the image, finishing with a message similar to &lt;code&gt;Successfully built 776b870cbe1d&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;You can now run the new docker image by executing:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;docker run -p 5858:5858 docker-aiohttp-hello-world
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;This will run the image in a new container, and map the service's 5858 port to the host's 5858 port. You should see the 
+output of the service forwarded to your console:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;C:\dev\git\docker-aiohttp-hello-world&amp;gt;docker run -p 5858:5858 docker-aiohttp-hello-world
+======== Running on http://0.0.0.0:5858 ========
+(Press CTRL+C to quit)
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;Hitting http://localhost:5858 should again return 'Hello, World!', but this time you are hitting the service running in 
+a Docker container. You should see this reflected in the STDOUT:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;======== Running on http://0.0.0.0:5858 ========
+(Press CTRL+C to quit)
+received request, replying with &amp;quot;Hello, World!&amp;quot;.
+received request, replying with &amp;quot;Hello, World!&amp;quot;.
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;To publish the Docker image to Docker Hub, follow the steps &lt;a href="https://docs.docker.com/engine/getstarted/step_six/"&gt;here&lt;/a&gt;. 
+I've published the image to a docker repo, and it can be run by executing:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;docker run -p 5858:5858 rendijssmukulis/docker-aiohttp-hello-world
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;This means the service can be run from any machine that has docker installed and has access to the docker repository, 
+e.g. in Amazon's EC2 Container Service.&lt;/p&gt;
+&lt;p&gt;&lt;em&gt;The source files can be found on &lt;a href="https://github.com/RendijsSmukulis/docker-aiohttp-hello-world"&gt;github&lt;/a&gt;.&lt;/em&gt;&lt;/p&gt;
+&lt;p&gt;Update: There is now a &lt;a href="//codevoid.io/hosting-a-python-web-service-in-gunicorn-and-docker.html"&gt;follow-up post&lt;/a&gt; 
+describing how to run this service in prod using the Gunicorn webserver.&lt;/p&gt;</content><category term="Articles"></category></entry></feed>

@@ -1,0 +1,255 @@
+<!DOCTYPE HTML>
+<!--
+	Strata by HTML5 UP
+	html5up.net | @ajlkn
+	Free for personal and commercial use under the CCA 3.0 license (html5up.net/license)
+-->
+<html>
+	<head>
+		<title>Getting started with Hu:toma.ai chat bot platform</title>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<!--[if lte IE 8]><script src="theme/js/ie/html5shiv.js"></script><![endif]-->
+		<link rel="stylesheet" href="theme/css/main.css" />		
+        <link rel="stylesheet" href="theme/css/pygment.css" />		
+        
+        <link href="http://codevoid.io/feeds/all.atom.xml" type="application/atom+xml" rel="alternate" title="Code Void Atom Feed" />
+
+
+		<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"/>
+		<link rel="icon" type="image/png" href="/favicon-32x32.png" sizes="32x32"/>
+		<link rel="icon" type="image/png" href="/favicon-16x16.png" sizes="16x16"/>
+		<link rel="manifest" href="/manifest.json"/>
+		<link rel="mask-icon" href="/safari-pinned-tab.svg" color="#5bbad5"/>
+		<meta name="theme-color" content="#ffffff"/>
+		<script>
+			(function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+			(i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+			m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+			})(window,document,'script','https://www.google-analytics.com/analytics.js','ga');
+			ga('create', 'UA-96943773-1', 'auto');
+			ga('send', 'pageview');
+		</script>
+		<!--[if lte IE 8]><link rel="stylesheet" href="theme/css/ie8.css" /><![endif]-->
+        <!--[if IE]>
+            <script src="http://html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+        <![endif]-->
+	</head>
+
+    <body id="top">
+
+		<!-- Header -->
+			<header id="header">
+				<div class="inner">
+					<a href="#" class="image avatar"><img src="theme/images/avatar.jpg" alt="" /></a>
+					<h1><strong>Code Void</strong> blog,<br />
+					programming and ramblings<br />
+					by <a href=".">Rendijs Smukulis</a></h1>
+				</div>
+			</header>
+
+            
+	<!-- Main -->
+	<div id="main">
+
+    <!-- index...-->
+<section id="one">
+	<section id="content" class="body">
+		<article>
+					<header class="major">
+				<h2 class="blog-post-title archive-header"><a href="./getting-started-with-hutomaai-chat-bot-platform.html" rel="bookmark"
+						title="Permalink to Getting started with Hu:toma.ai chat bot platform">Getting started with Hu:toma.ai chat bot platform</a></h2>
+			</header>
+				
+			<div class="post-preview"><footer class="post-info">
+        <span id="article-date-span"><em>Sat 01 July 2017</em></span>
+</footer><!-- /.post-info --><p><a href="https://www.hutoma.com/">Hu:toma</a> recently launched their open beta, and since I've had 
+a bit of fun playing around with it, I think it deserves a quick post. So what is Hu:toma?
+It's a platform for developing, publishing and selling conversational bots. It enables developing 
+and training bots that your users can have a free-text conversation, while integrating with your 
+APIs. For example:</p>
+<p><img alt="Pizza ordering through a free-text chat" src="./images/pizza-chat.png"></p>
+<p>Hu:toma lets developers upload some training data in the form of example conversations. 
+It then trains the bot using their deep learning network to allow the bots to understand 
+variations of the questions and requests from the users. For more info, watch this <a href="https://www.youtube.com/watch?v=fB82FyKD674">quick video</a> or check out their <a href="https://www.hutoma.com/">site</a>.</p>
+<h2>Getting started</h2>
+<p>Before you can build your first bot, you need to get access to the beta program. At the time of 
+writing there was a wait list for the beta, but this might change soon. To join the waitlist,
+hit their page and click Login, it'll ask for your email. Once you receive the invite, you can
+start training your chat-bot army. </p>
+<p>Once that's sorted, you can log in to the <a href="https://console.hutoma.com">console</a> and create your 
+first bot. Hit the green <code>Create Bot</code> button:</p>
+<p><img alt="Hutoma 1" src="./images/hutoma1.png"></p>
+<p>Name it something appropriate, I started off with the familiar name of <code>Hello World Bot</code>, some description, and leaving the other options unchanged:</p>
+<p><img alt="Hutoma 2" src="./images/hutoma2.png"></p>
+<p>Hit <code>Next</code>, then save your creation:</p>
+<p><img alt="Hutoma 3" src="./images/hutoma3.png"></p>
+<p>Next step is to prepare some basic conversation samples to let the neural net train the bot. Start
+with something basic, and create a text file with these lines:</p>
+<div class="highlight"><pre><span></span><code>hi
+hello, world!
+
+who are you?
+I am the Hello World bot
+
+what is your purpose?
+I pass the butter.
+</code></pre></div>
+
+<p>In the console, hit <code>select txt file</code>, pick your newly created training data and upload it:</p>
+<p><img alt="Hutoma 4" src="./images/hutoma4.png"></p>
+<p>After the upload, the training process will start. Once it finishes, you can try chatting to your
+newly trained bot. Note how you do not have to use the exact phrases from training data. For example,the bot will match both <code>hi</code> and <code>hello</code> to the response associated with <code>hi</code>:</p>
+<p><img alt="Hutoma 5" src="./images/hutoma5.png"></p>
+<p>You can imagine training the network with existing data sets of frequently asked questions - this
+would allow users to ask questions in fairly varied forms, and get the specified answers. </p>
+<h2>Giving the bots a purpose</h2>
+<p>While being able to train the bot with some pre-defined questions and answers is neat, 
+the really interesting interactions happen when the bot can perform some action; e.g. the previously
+mentioned pizza-ordering bot. </p>
+<p>Hutoma uses two concepts to allow a bot perform an action. The task itself is called an <code>intent</code>. Example
+intents might be <code>order a pizza</code>, <code>call a cab</code> or <code>check weather info</code>. The "inputs" to these actions are (somewhat ambiguously) named
+<code>entities</code>. For example, if the pizza-ordering intent needs to know the size of the pizza and the type of the toppings, it would
+use two entities, <code>topping</code> and <code>size</code>. Think of each entity as an enum, you can specify the range of values for it,
+then the user chooses one by talking to the bot.</p>
+<p>Let's create a bot that can report the top threads in a given subreddit on <a href="https://www.redit.com">Reddit</a>. To report on a given 
+subreddit, the bot will need to know which subreddit we are interested in. As such, we need to create a new <code>entity</code>. In the left 
+hand menum, select the bot you created earlier, and choose <code>entities</code>.</p>
+<p><img alt="Hutoma 6" src="./images/hutoma6.png"></p>
+<p>Create a new entity with a meaningful name, e.g. <code>subreddit</code>. Then add some subreddit names you want the bot to be able to query and save it.</p>
+<p><img alt="Hutoma 7" src="./images/hutoma7.png"></p>
+<p>Next we need to create an intent that represents the "get top subreddit threads" task. Navigate to the <code>intents</code> section. In there,
+name your new intent (e.g. <code>subreddit-top-thread-loader</code>) and click create. </p>
+<p>Under <code>User Expressions</code>, enter some sample queries users might initiate the intent (task) with. For the Reddit intent, I've used:</p>
+<div class="highlight"><pre><span></span><code>what&#39;s new on reddit
+what&#39;s hot on reddit
+what&#39;s hot in worldnews
+what&#39;s new on /r/cars
+</code></pre></div>
+
+<p>Including the entity value in the query allows the bot to figure out which subreddit the user is interested in without 
+queryign for it separately.</p>
+<p>Next, you need to add the <code>subreddit</code> entity and give a sample <code>prompt</code> for it. Bot will use this prompt to ask the user to
+choose a subreddit if they haven't already done so.</p>
+<p><img alt="Hutoma 8" src="./images/hutoma8.png"></p>
+<p>Next, choose a default response, e.g. <code>I'll get right on it!</code>. Normally, when using a webhook, the bot would only use the
+response when the call to the webhook failed. For our initial testing without a webhook, we'll always expect to see the 
+default response.</p>
+<p>Hit <code>Save Intent</code>, and, after the re-training is done, you can chat away: </p>
+<p><img alt="Hutoma 9" src="./images/hutoma9.png"></p>
+<p>Note the bot queries me for the specific subreddit when I didn't mention it in the first question, but
+picks up the subreddit name when I ask <code>what's new on /r/worldnews</code>.</p>
+<h2>Getting the message across</h2>
+<p>Now that our bot can interpret what we want to load from Reddit, let's actually enable it to load some threads from
+the requested subreddit. To achieve this, we need a web service that can act as a proxy between our bot
+and Reddit. It will provide an interface for the bot to call, retrieve some data from Reddit, then return that to
+the bot. </p>
+<p>I used <a href="http://docs.aws.amazon.com/apigateway/latest/developerguide/getting-started.html">AWS API Gateway and a Lambda function</a> to react to requests, but that's just one of the many posible solutions. To integrate your bot with an API, all you need to do is provide the API endpoint's
+URL in the WebHook part of the bot's configuration. The endpoint needs to accept a POST request.</p>
+<p>Here's a sample request Hutoma bot fires at the API:</p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span>  
+    <span class="nt">&quot;intentName&quot;</span><span class="p">:</span><span class="s2">&quot;subreddit-top-thread-loader&quot;</span><span class="p">,</span>
+    <span class="nt">&quot;memoryVariables&quot;</span><span class="p">:[</span>  
+        <span class="p">{</span>  
+            <span class="nt">&quot;entity&quot;</span><span class="p">:</span><span class="s2">&quot;subreddit&quot;</span><span class="p">,</span>
+            <span class="nt">&quot;value&quot;</span><span class="p">:</span><span class="s2">&quot;cars&quot;</span><span class="p">,</span>
+            <span class="nt">&quot;mandatory&quot;</span><span class="p">:</span><span class="kc">true</span><span class="p">,</span>
+            <span class="nt">&quot;entity_keys&quot;</span><span class="p">:[</span>  
+                <span class="s2">&quot;aww&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;cars&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;cats&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;showerthoughts&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;unitedkingdom&quot;</span><span class="p">,</span>
+                <span class="s2">&quot;worldnews&quot;</span>
+            <span class="p">],</span>
+            <span class="nt">&quot;prompts&quot;</span><span class="p">:[</span>  
+                <span class="s2">&quot;Which subreddit are you interested in?&quot;</span>
+            <span class="p">],</span>
+            <span class="nt">&quot;times_prompted&quot;</span><span class="p">:</span><span class="mi">0</span><span class="p">,</span>
+            <span class="nt">&quot;max_prompts&quot;</span><span class="p">:</span><span class="mi">3</span><span class="p">,</span>
+            <span class="nt">&quot;persistent&quot;</span><span class="p">:</span><span class="kc">false</span><span class="p">,</span>
+            <span class="nt">&quot;system_entity&quot;</span><span class="p">:</span><span class="kc">false</span>
+        <span class="p">}</span>
+    <span class="p">],</span>
+    <span class="nt">&quot;chatResult&quot;</span><span class="p">:{</span>  
+        <span class="nt">&quot;score&quot;</span><span class="p">:</span><span class="mf">1.0</span><span class="p">,</span>
+        <span class="nt">&quot;query&quot;</span><span class="p">:</span><span class="s2">&quot;what&#39;s new on /r/cars?&quot;</span><span class="p">,</span>
+        <span class="nt">&quot;answer&quot;</span><span class="p">:</span><span class="s2">&quot;I&#39;ll get right on it!&quot;</span><span class="p">,</span>
+        <span class="nt">&quot;elapsedTime&quot;</span><span class="p">:</span><span class="mf">2.764</span>
+    <span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+
+<p>It includes everything we need to react to the request:</p>
+<ul>
+<li>The original query by the user</li>
+<li>The intent's entity type (<code>subreddit</code>)</li>
+<li>The value of the entity, <code>cars</code> in this case, meaning the user is interested in the <code>/r/cars</code> subreddit.</li>
+</ul>
+<p>I used reddit's <a href="https://praw.readthedocs.io/en/latest/">praw</a> library to load the new submissions. Here's the code for the 
+Lambda function:</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span> <span class="nn">praw</span>
+
+<span class="n">reddit</span> <span class="o">=</span> <span class="n">praw</span><span class="o">.</span><span class="n">Reddit</span><span class="p">(</span><span class="n">client_id</span><span class="o">=</span><span class="s1">&#39;[YOUR CLIENT ID HERE]&#39;</span><span class="p">,</span>
+                    <span class="n">client_secret</span><span class="o">=</span><span class="s1">&#39;[YOUR CLIENT SECRET]&#39;</span><span class="p">,</span>
+                    <span class="n">user_agent</span><span class="o">=</span><span class="s1">&#39;AWS Lambda PRAW client&#39;</span><span class="p">)</span>
+
+<span class="k">def</span> <span class="nf">lambda_handler</span><span class="p">(</span><span class="n">event</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
+    <span class="c1"># Extract the required subreddit&#39;s name from the Hutoma request</span>
+    <span class="n">kvps</span> <span class="o">=</span> <span class="n">_get_kvp_from_hutoma_request</span><span class="p">(</span><span class="n">event</span><span class="p">)</span>
+    <span class="n">subreddit</span> <span class="o">=</span> <span class="n">kvps</span><span class="p">[</span><span class="s1">&#39;subreddit&#39;</span><span class="p">]</span>
+
+    <span class="c1"># Load some data from the subreddit</span>
+    <span class="n">titles</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">submission</span> <span class="ow">in</span> <span class="n">reddit</span><span class="o">.</span><span class="n">subreddit</span><span class="p">(</span><span class="n">subreddit</span><span class="p">)</span><span class="o">.</span><span class="n">hot</span><span class="p">(</span><span class="n">limit</span><span class="o">=</span><span class="mi">5</span><span class="p">):</span>
+        <span class="n">titles</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s1">&#39;&quot;</span><span class="si">{}</span><span class="s1">&quot;: https://reddit.com</span><span class="si">{}</span><span class="s1">&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">submission</span><span class="o">.</span><span class="n">title</span><span class="p">,</span> <span class="n">submission</span><span class="o">.</span><span class="n">permalink</span><span class="p">))</span>
+
+    <span class="c1"># Return to the Hutoma bot    </span>
+    <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;text&quot;</span><span class="p">:</span> <span class="s1">&#39; </span><span class="se">\r\n\r\n</span><span class="s1">&#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">titles</span><span class="p">)}</span>
+
+<span class="k">def</span> <span class="nf">_get_kvp_from_hutoma_request</span><span class="p">(</span><span class="n">request</span><span class="p">):</span>
+    <span class="sd">&quot;&quot;&quot;Transforms the Hutoma Request into a key-value dictionary&quot;&quot;&quot;</span>
+    <span class="n">entity_dict</span> <span class="o">=</span> <span class="p">{}</span> 
+    <span class="k">for</span> <span class="n">h_var</span> <span class="ow">in</span> <span class="n">request</span><span class="p">[</span><span class="s1">&#39;memoryVariables&#39;</span><span class="p">]:</span>
+        <span class="n">h_value</span> <span class="o">=</span> <span class="n">h_var</span><span class="p">[</span><span class="s1">&#39;entity&#39;</span><span class="p">]</span>
+        <span class="k">if</span> <span class="n">h_value</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">entity_dict</span><span class="p">:</span>
+            <span class="n">entity_dict</span><span class="p">[</span><span class="n">h_value</span><span class="p">]</span> <span class="o">=</span> <span class="n">h_var</span><span class="p">[</span><span class="s1">&#39;value&#39;</span><span class="p">]</span>
+
+    <span class="k">return</span> <span class="n">entity_dict</span>
+</code></pre></div>
+
+<p>This will return the titles and URLs of the top five hot submissions in the requested subreddit. After adding the API's URL to the bot's WebHook setting, you can chat with the bot and have it fetch data from the new endpoint:</p>
+			</div>
+		</article>
+	</section>
+</section>
+
+    </div>
+
+    
+	<!-- Footer -->
+	<footer id="footer">
+		<div class="inner">
+			<ul class="icons">
+				<li><a href="." class="icon fa-home"><span class="label">Home</span></a></li>
+				<li><a href="https://www.linkedin.com/in/rendijs-smukulis/" class="icon fa-linkedin"><span class="label">Twitter</span></a></li>
+				<li><a href="https://github.com/RendijsSmukulis" class="icon fa-github"><span class="label">Github</span></a></li>
+				<li><a href="http://codevoid.io/feeds/all.atom.xml" class="icon fa-rss"><span class="label">RSS Feed</span></a></li>
+			</ul>
+			<ul class="copyright">
+				<li>&copy; Rendijs/Randy Smukulis</li>
+			</ul>
+		</div>
+	</footer>
+
+	<!-- Scripts -->
+	<script src="theme/js/jquery.min.js"></script>
+	<script src="theme/js/jquery.poptrox.min.js"></script>
+	<script src="theme/js/skel.min.js"></script>
+	<script src="theme/js/util.js"></script>
+	<!--[if lte IE 8]><script src="theme/js/ie/respond.min.js"></script><![endif]-->
+	<script src="theme/js/main.js"></script>
+
+</body>
+
+</html>
